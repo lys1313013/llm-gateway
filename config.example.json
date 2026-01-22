@@ -1,0 +1,192 @@
+{
+  "mode": "mock",
+  "proxy_config": {
+    "enabled": false,
+    "target_url": "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
+    "api_key": "xxx",
+    "timeout": 60,
+    "model": "qwen-plus",
+    "log_requests": true,
+    "log_responses": true
+  },
+  "preset_responses": [
+    {
+      "match_conditions": {"model": "mock", "stream": false, "temperature": 0, "max_tokens": 256, "chat_template_kwargs": {"enable_thinking": false, "thinking": false}, "thinking": {"type": "disabled"}, "messages": [{"role": "user", "content": "Human: \u4f60\u597d /no_think\nAssistant: \u4f60\u597d\uff01\u6709\u4ec0\u4e48\u6211\u53ef\u4ee5\u5e2e\u4f60\u7684\u5417\uff1f\ud83d\ude0a\nPlease help me predict the three most likely questions that human would ask, and keep each question under 20 characters.\nMAKE SURE your output is the SAME language as the Assistant's latest response. The output must be an array in JSON format following the specified schema:\n[\"question1\",\"question2\",\"question3\"]\n\nquestions:\n"}], "user": "unknown"},
+      "stream_response_chunks": [{"choices": [{"message": {"role": "assistant", "content": "[\"你好啊\", \"在吗\", \"有事吗\"]"}, "finish_reason": "stop", "index": 0, "logprobs": null}], "object": "chat.completion", "usage": {"prompt_tokens": 96, "completion_tokens": 13, "total_tokens": 109, "prompt_tokens_details": {"cached_tokens": 0}}, "created": 1768908181, "system_fingerprint": null, "model": "qwen-plus", "id": "chatcmpl-ace27dfb-aee6-943d-8f6c-b79438a3fbda"}]
+    },
+    {
+      "match_conditions": {
+        "model": "deepseek-r1-0528",
+        "messages": [
+          {
+            "role": "user",
+            "content": "当前时间"
+          }
+        ],
+        "stream": true,
+        "tool_choice": "auto",
+        "tools": [
+          {
+            "type": "function",
+            "function": {
+              "name": "current_time",
+              "description": "A tool for getting the current time.",
+              "parameters": {
+                "type": "object",
+                "properties": {}
+              }
+            }
+          }
+        ]
+      },
+      "stream_response_chunks": []
+    },
+    {
+      "match_conditions": {
+        "model": "gpt-3.5-turbo",
+        "messages": [
+          {
+            "role": "user",
+            "content": "Tell me a joke"
+          }
+        ],
+        "stream": true
+      },
+      "stream_response_chunks": [
+        {
+          "id": "chatcmpl-123",
+          "object": "chat.completion.chunk",
+          "created": 1694268190,
+          "model": "gpt-3.5-turbo",
+          "choices": [
+            {
+              "index": 0,
+              "delta": { "role": "assistant", "content": "" },
+              "finish_reason": null
+            }
+          ]
+        },
+        {
+          "id": "chatcmpl-123",
+          "object": "chat.completion.chunk",
+          "created": 1694268190,
+          "model": "gpt-3.5-turbo",
+          "choices": [
+            {
+              "index": 0,
+              "delta": { "content": "Why did the " },
+              "finish_reason": null
+            }
+          ]
+        },
+        {
+          "id": "chatcmpl-123",
+          "object": "chat.completion.chunk",
+          "created": 1694268190,
+          "model": "gpt-3.5-turbo",
+          "choices": [
+            {
+              "index": 0,
+              "delta": { "content": "chicken cross the road?" },
+              "finish_reason": null
+            }
+          ]
+        },
+        {
+          "id": "chatcmpl-123",
+          "object": "chat.completion.chunk",
+          "created": 1694268190,
+          "model": "gpt-3.5-turbo",
+          "choices": [
+            {
+              "index": 0,
+              "delta": {},
+              "finish_reason": "stop"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "match_conditions": {
+        "model": "gpt-3.5-turbo",
+        "messages": [
+          {
+            "role": "user",
+            "content": "Multiple choices"
+          }
+        ],
+        "stream": true
+      },
+      "stream_response_chunks": [
+        {
+          "choices": [
+            { "index": 0, "delta": { "role": "assistant", "content": "Choice 1: Hello!" }, "finish_reason": null },
+            { "index": 1, "delta": { "role": "assistant", "content": "Choice 2: Hi there!" }, "finish_reason": null }
+          ]
+        },
+        {
+          "choices": [
+            { "index": 0, "delta": {}, "finish_reason": "stop" },
+            { "index": 1, "delta": {}, "finish_reason": "stop" }
+          ]
+        }
+      ]
+    },
+    {
+      "match_conditions": {
+        "model": "gpt-4",
+        "user": "test_user"
+      },
+      "response": {
+        "id": "chatcmpl-abcdef1234567890",
+        "object": "chat.completion",
+        "created": 1677825464,
+        "model": "gpt-4",
+        "choices": [
+          {
+            "index": 0,
+            "message": {
+              "role": "assistant",
+              "content": "This is a special response for test_user using GPT-4."
+            },
+            "finish_reason": "stop"
+          }
+        ],
+        "usage": {
+          "prompt_tokens": 15,
+          "completion_tokens": 15,
+          "total_tokens": 30
+        }
+      }
+    },
+    {
+      "match_conditions":  {"model": "mock", "stream": false, "temperature": 0, "max_tokens": 256, "chat_template_kwargs": {"enable_thinking": false, "thinking": false}, "thinking": {"type": "disabled"}, "messages": [{"role": "user", "content": "Human: \u4f60\u597d /no_think\nAssistant: \u4f60\u597d\uff01\u6709\u4ec0\u4e48\u6211\u53ef\u4ee5\u5e2e\u4f60\u7684\u5417\uff1f\ud83d\ude0a\nPlease help me predict the three most likely questions that human would ask, and keep each question under 20 characters.\nMAKE SURE your output is the SAME language as the Assistant's latest response. The output must be an array in JSON format following the specified schema:\n[\"question1\",\"question2\",\"question3\"]\n\nquestions:\n"}], "user": "unknown"},
+      "response": {
+        "id": "chatcmpl-functioncall-123",
+        "object": "chat.completion",
+        "created": 1677825464,
+        "model": "gpt-3.5-turbo",
+        "choices": [
+          {
+            "index": 0,
+            "message": {
+              "role": "assistant",
+              "content": null,
+              "function_call": {
+                "name": "get_weather",
+                "arguments": "{\"city\": \"Beijing\", \"date\": \"2023-12-25\"}"
+              }
+            },
+            "finish_reason": "function_call"
+          }
+        ],
+        "usage": {
+          "prompt_tokens": 20,
+          "completion_tokens": 25,
+          "total_tokens": 45
+        }
+      }
+    }
+  ]
+}
