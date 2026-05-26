@@ -1,5 +1,5 @@
-import psycopg2
-from psycopg2.extras import RealDictCursor
+import psycopg
+from psycopg.rows import dict_row
 import json
 import logging
 import os
@@ -16,7 +16,7 @@ DB_TIMEZONE = os.environ.get("DB_TIMEZONE", "Asia/Shanghai")
 
 def get_db_connection():
     try:
-        conn = psycopg2.connect(
+        conn = psycopg.connect(
             host=DB_HOST,
             port=DB_PORT,
             dbname=DB_NAME,
@@ -225,7 +225,7 @@ def get_logs(limit=50, offset=0, model=None, protocol=None):
         if conditions:
             where_clause = "WHERE " + " AND ".join(conditions)
 
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        with conn.cursor(row_factory=dict_row) as cur:
             cur.execute(f"""
                 SELECT id, created_at, updated_at, model, is_stream,
                        status_code, processing_time_ms, prompt_tokens,
@@ -259,7 +259,7 @@ def get_today_stats():
         return None
 
     try:
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        with conn.cursor(row_factory=dict_row) as cur:
             cur.execute("""
                 SELECT
                     COUNT(id) as request_count,
@@ -284,7 +284,7 @@ def get_daily_token_stats(start_date=None, end_date=None):
         return []
         
     try:
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        with conn.cursor(row_factory=dict_row) as cur:
             query = """
                 SELECT 
                     DATE(created_at) as date,
@@ -332,7 +332,7 @@ def get_hourly_token_stats(date):
     if not conn:
         return []
     try:
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        with conn.cursor(row_factory=dict_row) as cur:
             cur.execute(f"""
                 SELECT
                     g.hour AS hour,
@@ -369,7 +369,7 @@ def get_model_token_stats(start_date=None, end_date=None):
         return []
         
     try:
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        with conn.cursor(row_factory=dict_row) as cur:
             query = """
                 SELECT 
                     COALESCE(model, 'unknown') as model,
@@ -405,7 +405,7 @@ def get_providers():
     conn = get_db_connection()
     if not conn: return []
     try:
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        with conn.cursor(row_factory=dict_row) as cur:
             cur.execute("SELECT * FROM provider ORDER BY id ASC")
             rows = cur.fetchall()
             for r in rows:
@@ -422,7 +422,7 @@ def get_provider(provider_id):
     conn = get_db_connection()
     if not conn: return None
     try:
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        with conn.cursor(row_factory=dict_row) as cur:
             cur.execute("SELECT * FROM provider WHERE id = %s", (provider_id,))
             row = cur.fetchone()
             if row:
@@ -439,7 +439,7 @@ def create_provider(data):
     conn = get_db_connection()
     if not conn: return None
     try:
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        with conn.cursor(row_factory=dict_row) as cur:
             cur.execute("""
                 INSERT INTO provider (name, base_url, api_key, protocol, remark)
                 VALUES (%s, %s, %s, %s, %s) RETURNING *
@@ -460,7 +460,7 @@ def update_provider(provider_id, data):
     conn = get_db_connection()
     if not conn: return None
     try:
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        with conn.cursor(row_factory=dict_row) as cur:
             cur.execute("""
                 UPDATE provider SET 
                 name = COALESCE(%s, name), 
@@ -503,7 +503,7 @@ def get_routes():
     conn = get_db_connection()
     if not conn: return []
     try:
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        with conn.cursor(row_factory=dict_row) as cur:
             cur.execute("SELECT * FROM model_route ORDER BY priority DESC, id ASC")
             rows = cur.fetchall()
             for r in rows:
@@ -520,7 +520,7 @@ def get_route(route_id):
     conn = get_db_connection()
     if not conn: return None
     try:
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        with conn.cursor(row_factory=dict_row) as cur:
             cur.execute("SELECT * FROM model_route WHERE id = %s", (route_id,))
             row = cur.fetchone()
             if row:
@@ -537,7 +537,7 @@ def create_route(data):
     conn = get_db_connection()
     if not conn: return None
     try:
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        with conn.cursor(row_factory=dict_row) as cur:
             cur.execute("""
                 INSERT INTO model_route (model_pattern, route_type, provider_id, target_model, timeout, log_requests, log_responses, priority, is_active)
                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING *
@@ -560,7 +560,7 @@ def update_route(route_id, data):
     conn = get_db_connection()
     if not conn: return None
     try:
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        with conn.cursor(row_factory=dict_row) as cur:
             cur.execute("""
                 UPDATE model_route SET 
                 model_pattern = COALESCE(%s, model_pattern),
@@ -609,7 +609,7 @@ def get_active_routes():
     conn = get_db_connection()
     if not conn: return []
     try:
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        with conn.cursor(row_factory=dict_row) as cur:
             cur.execute("""
                 SELECT r.*, p.base_url, p.api_key, p.protocol
                 FROM model_route r
@@ -629,7 +629,7 @@ def get_exposed_models():
     conn = get_db_connection()
     if not conn: return []
     try:
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        with conn.cursor(row_factory=dict_row) as cur:
             cur.execute("SELECT * FROM exposed_model ORDER BY id ASC")
             rows = cur.fetchall()
             for r in rows:
@@ -646,7 +646,7 @@ def get_exposed_model(model_id):
     conn = get_db_connection()
     if not conn: return None
     try:
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        with conn.cursor(row_factory=dict_row) as cur:
             cur.execute("SELECT * FROM exposed_model WHERE id = %s", (model_id,))
             row = cur.fetchone()
             if row:
@@ -663,7 +663,7 @@ def create_exposed_model(data):
     conn = get_db_connection()
     if not conn: return None
     try:
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        with conn.cursor(row_factory=dict_row) as cur:
             cur.execute("""
                 INSERT INTO exposed_model (model_id, owned_by, is_active)
                 VALUES (%s, %s, %s) RETURNING *
@@ -685,7 +685,7 @@ def update_exposed_model(model_id, data):
     conn = get_db_connection()
     if not conn: return None
     try:
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        with conn.cursor(row_factory=dict_row) as cur:
             cur.execute("""
                 UPDATE exposed_model SET
                 model_id = COALESCE(%s, model_id),
@@ -713,7 +713,7 @@ def update_exposed_model_test_time(model_id, protocol):
     if not conn: return None
     col = 'last_openai_test_time' if protocol == 'openai' else 'last_anthropic_test_time'
     try:
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        with conn.cursor(row_factory=dict_row) as cur:
             cur.execute(f"""
                 UPDATE exposed_model SET {col} = CURRENT_TIMESTAMP, update_time = CURRENT_TIMESTAMP
                 WHERE id = %s RETURNING *
@@ -750,7 +750,7 @@ def get_active_exposed_models():
     conn = get_db_connection()
     if not conn: return []
     try:
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        with conn.cursor(row_factory=dict_row) as cur:
             cur.execute("SELECT * FROM exposed_model WHERE is_active = TRUE ORDER BY id ASC")
             rows = cur.fetchall()
             for r in rows:
