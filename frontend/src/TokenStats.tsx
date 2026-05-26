@@ -24,16 +24,38 @@ type ModelStat = {
   total_tokens: number
 }
 
+type HourlyStat = {
+  hour: number
+  request_count: number
+  prompt_tokens: number
+  completion_tokens: number
+  total_tokens: number
+}
+
 const TokenStats = () => {
   const [dailyData, setDailyData] = useState<DailyStat[]>([])
   const [modelData, setModelData] = useState<ModelStat[]>([])
+  const [hourlyData, setHourlyData] = useState<HourlyStat[]>([])
   const [loading, setLoading] = useState(false)
-  
-  // Default range: last 30 days to today
+
+  // Default range: today
   const [dateRange, setDateRange] = useState<[Dayjs | null, Dayjs | null]>([
-    dayjs().subtract(30, 'day'),
+    dayjs(),
     dayjs()
   ])
+
+  const presets: { label: string; value: [Dayjs, Dayjs] }[] = [
+    { label: '当天', value: [dayjs(), dayjs()] },
+    { label: '1天', value: [dayjs().subtract(1, 'day'), dayjs()] },
+    { label: '7天', value: [dayjs().subtract(7, 'day'), dayjs()] },
+    { label: '30天', value: [dayjs().subtract(30, 'day'), dayjs()] },
+    { label: '90天', value: [dayjs().subtract(90, 'day'), dayjs()] },
+    { label: '6个月', value: [dayjs().subtract(6, 'month'), dayjs()] },
+  ]
+
+  const isSingleDay = dateRange[0] !== null
+    && dateRange[1] !== null
+    && dateRange[0].format('YYYY-MM-DD') === dateRange[1].format('YYYY-MM-DD')
 
   const fetchStats = async (start?: string, end?: string) => {
     setLoading(true)
@@ -46,8 +68,9 @@ const TokenStats = () => {
       const result = await response.json()
       
       if (result.success) {
-        setDailyData(result.data.daily as DailyStat[])
-        setModelData(result.data.models as ModelStat[])
+        setDailyData(result.data.daily || [])
+        setHourlyData(result.data.hourly || [])
+        setModelData(result.data.models || [])
       } else {
         message.error('获取统计数据失败')
       }
@@ -70,16 +93,17 @@ const TokenStats = () => {
   }
 
   // Calculate totals for cards
-  const totalRequests = dailyData.reduce((sum, item) => sum + item.request_count, 0)
-  const totalPromptTokens = dailyData.reduce((sum, item) => sum + item.prompt_tokens, 0)
-  const totalCompletionTokens = dailyData.reduce((sum, item) => sum + item.completion_tokens, 0)
-  const totalTokens = dailyData.reduce((sum, item) => sum + item.total_tokens, 0)
+  const sourceData = isSingleDay ? hourlyData : dailyData
+  const totalRequests = sourceData.reduce((sum, item) => sum + item.request_count, 0)
+  const totalPromptTokens = sourceData.reduce((sum, item) => sum + item.prompt_tokens, 0)
+  const totalCompletionTokens = sourceData.reduce((sum, item) => sum + item.completion_tokens, 0)
+  const totalTokens = sourceData.reduce((sum, item) => sum + item.total_tokens, 0)
 
   // Chart configuration
   // Transform data for stacked column chart
   const chartData = dailyData.flatMap(item => [
-    { date: item.date, type: 'Prompt Tokens', value: item.prompt_tokens },
-    { date: item.date, type: 'Completion Tokens', value: item.completion_tokens }
+    { date: item.date, type: '输入 Token', value: item.prompt_tokens },
+    { date: item.date, type: '输出 Token', value: item.completion_tokens }
   ])
 
   const config = {
@@ -97,11 +121,59 @@ const TokenStats = () => {
     }
   }
 
+  const hourlyChartData = hourlyData.map(item => ({
+    ...item,
+    hourLabel: `${item.hour}`,
+  }))
+
+  const hourlyChartSeries = hourlyChartData.flatMap(item => [
+    { hour: item.hourLabel, type: '输入 Token', value: item.prompt_tokens },
+    { hour: item.hourLabel, type: '输出 Token', value: item.completion_tokens }
+  ])
+
+  // Find peak hour for annotation
+  const maxHourlyTotal = hourlyData.reduce((max, item) =>
+    item.total_tokens > max ? item.total_tokens : max, 0)
+  const maxHourLabel = hourlyData.find(h => h.total_tokens === maxHourlyTotal && maxHourlyTotal > 0)
+    ? `${hourlyData.find(h => h.total_tokens === maxHourlyTotal)!.hour}`
+    : null
+
+  const hourlyConfig = {
+    data: hourlyChartSeries,
+    xField: 'hour',
+    yField: 'value',
+    colorField: 'type',
+    stack: true,
+    height: 400,
+    legend: {
+      position: 'top-left' as const,
+    },
+    tooltip: {
+      title: 'Tokens'
+    },
+    label: {
+      text: (d: any) => {
+        if (String(d.hour) === String(maxHourLabel) && d.type === '输出 Token') {
+          return maxHourlyTotal.toLocaleString()
+        }
+        return ''
+      },
+      position: 'outside',
+      style: {
+        fontSize: 13,
+        fontWeight: 'bold' as const,
+        dy: -8,
+      },
+    },
+  }
+
   const columns: TableColumnsType<DailyStat> = [
     {
       title: '日期',
       dataIndex: 'date',
       key: 'date',
+      sorter: (a: DailyStat, b: DailyStat) => a.date.localeCompare(b.date),
+      defaultSortOrder: 'descend' as const,
     },
     {
       title: '请求次数',
@@ -109,12 +181,41 @@ const TokenStats = () => {
       key: 'request_count',
     },
     {
-      title: 'Prompt Tokens',
+      title: '输入 Token',
       dataIndex: 'prompt_tokens',
       key: 'prompt_tokens',
     },
     {
-      title: 'Completion Tokens',
+      title: '输出 Token',
+      dataIndex: 'completion_tokens',
+      key: 'completion_tokens',
+    },
+    {
+      title: '总计 Tokens',
+      dataIndex: 'total_tokens',
+      key: 'total_tokens',
+    },
+  ]
+
+  const hourlyColumns: TableColumnsType<HourlyStat> = [
+    {
+      title: '小时',
+      dataIndex: 'hour',
+      key: 'hour',
+      render: (hour: number) => `${hour.toString().padStart(2, '0')}:00`,
+    },
+    {
+      title: '请求次数',
+      dataIndex: 'request_count',
+      key: 'request_count',
+    },
+    {
+      title: '输入 Token',
+      dataIndex: 'prompt_tokens',
+      key: 'prompt_tokens',
+    },
+    {
+      title: '输出 Token',
       dataIndex: 'completion_tokens',
       key: 'completion_tokens',
     },
@@ -129,8 +230,8 @@ const TokenStats = () => {
     data: modelData,
     angleField: 'total_tokens',
     colorField: 'model',
-    radius: 0.6,
-    innerRadius: 0.4,
+    radius: 0.45,
+    innerRadius: 0.35,
     height: 400,
     label: {
       text: (d: any) => `${d.model}\n${d.total_tokens}`,
@@ -149,9 +250,10 @@ const TokenStats = () => {
     <div>
       <div style={{ marginBottom: 24, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <Title level={3} style={{ margin: 0 }}>Token 消耗统计</Title>
-        <RangePicker 
-          value={dateRange} 
+        <RangePicker
+          value={dateRange}
           onChange={handleDateRangeChange}
+          presets={presets}
           allowClear={false}
         />
       </div>
@@ -169,30 +271,44 @@ const TokenStats = () => {
         </Col>
         <Col span={6}>
           <Card>
-            <Statistic title="Prompt Tokens" value={totalPromptTokens} loading={loading} />
+            <Statistic title="输入 Token" value={totalPromptTokens} loading={loading} />
           </Card>
         </Col>
         <Col span={6}>
           <Card>
-            <Statistic title="Completion Tokens" value={totalCompletionTokens} loading={loading} />
+            <Statistic title="输出 Token" value={totalCompletionTokens} loading={loading} />
           </Card>
         </Col>
       </Row>
 
       <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
         <Col span={16}>
-          <Card title="每日 Token 消耗趋势" loading={loading} style={{ height: '100%' }}>
-            {dailyData.length > 0 ? (
-              <Column {...config} />
+          <Card
+            title={isSingleDay ? '每小时 Token 消耗趋势' : '每日 Token 消耗趋势'}
+            loading={loading}
+            style={{ height: '100%' }}
+          >
+            {isSingleDay ? (
+              hourlyData.some(h => h.request_count > 0) ? (
+                <Column {...hourlyConfig} />
+              ) : (
+                <div style={{ height: 400, display: 'flex', justifyContent: 'center', alignItems: 'center', color: '#999' }}>
+                  暂无数据
+                </div>
+              )
             ) : (
-              <div style={{ height: 400, display: 'flex', justifyContent: 'center', alignItems: 'center', color: '#999' }}>
-                暂无数据
-              </div>
+              dailyData.length > 0 ? (
+                <Column {...config} />
+              ) : (
+                <div style={{ height: 400, display: 'flex', justifyContent: 'center', alignItems: 'center', color: '#999' }}>
+                  暂无数据
+                </div>
+              )
             )}
           </Card>
         </Col>
         <Col span={8}>
-          <Card title="模型消耗占比 (Total Tokens)" loading={loading} style={{ height: '100%' }}>
+          <Card title="模型消耗占比 (Total Tokens)" loading={loading} style={{ height: '100%', overflow: 'hidden' }}>
             {modelData.length > 0 ? (
               <Pie {...pieConfig} />
             ) : (
@@ -204,13 +320,22 @@ const TokenStats = () => {
         </Col>
       </Row>
 
-      <Card title="每日详细数据" loading={loading}>
-        <Table 
-          columns={columns} 
-          dataSource={dailyData} 
-          rowKey="date"
-          pagination={{ pageSize: 10 }}
-        />
+      <Card title={isSingleDay ? '每小时详细数据' : '每日详细数据'} loading={loading}>
+        {isSingleDay ? (
+          <Table
+            columns={hourlyColumns}
+            dataSource={hourlyData}
+            rowKey="hour"
+            pagination={false}
+          />
+        ) : (
+          <Table
+            columns={columns}
+            dataSource={dailyData}
+            rowKey="date"
+            pagination={{ pageSize: 10 }}
+          />
+        )}
       </Card>
     </div>
   )
