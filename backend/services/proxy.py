@@ -4,6 +4,7 @@ import requests
 import time
 from flask import Response, jsonify
 from db import insert_log
+from token_utils import calculate_usage
 
 logger = logging.getLogger(__name__)
 
@@ -142,8 +143,9 @@ def forward_stream_response(response, request_data, proxy_config, start_time, lo
         # Log to DB
         processing_time_ms = int((time.time() - start_time) * 1000)
         usage = aggregated.get('usage', {})
+        if not usage or ('total_tokens' not in usage and 'prompt_tokens' not in usage):
+            usage = calculate_usage(request_data, aggregated)
         insert_log({
-            'mode': 'proxy',
             'model': request_data.get('model'),
             'is_stream': True,
             'status_code': response.status_code,
@@ -153,7 +155,8 @@ def forward_stream_response(response, request_data, proxy_config, start_time, lo
             'total_tokens': usage.get('total_tokens'),
             'target_url': proxy_config.get('target_url'),
             'request_data': request_data,
-            'response_data': aggregated
+            'response_data': aggregated,
+            'protocol': proxy_config.get('protocol'),
         })
 
 
@@ -176,7 +179,6 @@ def handle_proxy_request(request_data, proxy_config):
                 error_resp = response.text
                 
             insert_log({
-                'mode': 'proxy',
                 'model': request_data.get('model'),
                 'is_stream': is_stream,
                 'status_code': response.status_code,
@@ -184,7 +186,8 @@ def handle_proxy_request(request_data, proxy_config):
                 'target_url': proxy_config.get('target_url'),
                 'request_data': request_data,
                 'response_data': error_resp,
-                'error_message': f"Target API returned error: {response.status_code}"
+                'error_message': f"Target API returned error: {response.status_code}",
+                'protocol': proxy_config.get('protocol'),
             })
             return jsonify(error_resp), response.status_code
         
@@ -197,9 +200,10 @@ def handle_proxy_request(request_data, proxy_config):
             resp_json = response.json()
             processing_time_ms = int((time.time() - start_time) * 1000)
             usage = resp_json.get('usage', {})
+            if not usage or ('total_tokens' not in usage and 'prompt_tokens' not in usage):
+                usage = calculate_usage(request_data, resp_json)
             
             insert_log({
-                'mode': 'proxy',
                 'model': request_data.get('model'),
                 'is_stream': False,
                 'status_code': 200,
@@ -209,21 +213,22 @@ def handle_proxy_request(request_data, proxy_config):
                 'total_tokens': usage.get('total_tokens'),
                 'target_url': proxy_config.get('target_url'),
                 'request_data': request_data,
-                'response_data': resp_json
+                'response_data': resp_json,
+                'protocol': proxy_config.get('protocol'),
             })
             return jsonify(resp_json), 200
             
     except requests.exceptions.Timeout:
         processing_time_ms = int((time.time() - start_time) * 1000)
         insert_log({
-            'mode': 'proxy',
             'model': request_data.get('model'),
             'is_stream': request_data.get('stream', False),
             'status_code': 504,
             'processing_time_ms': processing_time_ms,
             'target_url': proxy_config.get('target_url'),
             'request_data': request_data,
-            'error_message': 'Request to target API timed out'
+            'error_message': 'Request to target API timed out',
+            'protocol': proxy_config.get('protocol'),
         })
         return jsonify({
             'error': {
@@ -234,14 +239,14 @@ def handle_proxy_request(request_data, proxy_config):
     except requests.exceptions.RequestException as e:
         processing_time_ms = int((time.time() - start_time) * 1000)
         insert_log({
-            'mode': 'proxy',
             'model': request_data.get('model'),
             'is_stream': request_data.get('stream', False),
             'status_code': 502,
             'processing_time_ms': processing_time_ms,
             'target_url': proxy_config.get('target_url'),
             'request_data': request_data,
-            'error_message': f'Failed to forward request: {str(e)}'
+            'error_message': f'Failed to forward request: {str(e)}',
+            'protocol': proxy_config.get('protocol'),
         })
         return jsonify({
             'error': {

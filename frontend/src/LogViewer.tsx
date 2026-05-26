@@ -1,0 +1,353 @@
+import { useEffect, useMemo, useState } from 'react'
+import { Button, Card, Col, Descriptions, Input, Modal, Row, Select, Space, Statistic, Table, Tag, Typography, message } from 'antd'
+import type { TableColumnsType } from 'antd'
+import dayjs from 'dayjs'
+import JsonViewer from './JsonViewer'
+
+const { Title, Text } = Typography
+
+type LogRecord = {
+  id: number
+  created_at: string
+  updated_at?: string
+  model?: string | null
+  is_stream: boolean
+  protocol?: string | null
+  status_code?: number | null
+  processing_time_ms?: number | null
+  prompt_tokens?: number | null
+  completion_tokens?: number | null
+  total_tokens?: number | null
+  target_url?: string | null
+  request_data?: unknown
+  response_data?: unknown
+  error_message?: string | null
+}
+
+const LogViewer = () => {
+  const [logs, setLogs] = useState<LogRecord[]>([])
+  const [loading, setLoading] = useState(false)
+  const [modalVisible, setModalVisible] = useState(false)
+  const [currentLog, setCurrentLog] = useState<LogRecord | null>(null)
+  const [filterModel, setFilterModel] = useState('')
+  const [filterProtocol, setFilterProtocol] = useState<string | undefined>(undefined)
+  const [todayStats, setTodayStats] = useState({ requestCount: 0, promptTokens: 0, completionTokens: 0, totalTokens: 0 })
+
+  const fetchTodayStats = async () => {
+    try {
+      const res = await fetch('/api/logs/today_stats')
+      const result = await res.json()
+      if (result.success) {
+        setTodayStats({
+          requestCount: result.data.request_count,
+          promptTokens: result.data.prompt_tokens,
+          completionTokens: result.data.completion_tokens,
+          totalTokens: result.data.total_tokens,
+        })
+      }
+    } catch (e) {
+      console.error('获取今日统计失败:', e)
+    }
+  }
+
+  const fetchLogs = async (model?: string, protocol?: string) => {
+    setLoading(true)
+    try {
+      const params = new URLSearchParams({ limit: '100' })
+      if (model) params.append('model', model)
+      if (protocol) params.append('protocol', protocol)
+      const response = await fetch(`/api/logs?${params}`)
+      const result = await response.json()
+      if (result.success) {
+        setLogs(result.data as LogRecord[])
+      }
+    } catch (error) {
+      console.error('获取日志失败:', error)
+      message.error('获取日志失败')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    void fetchLogs()
+    void fetchTodayStats()
+  }, [])
+
+  const handleRefresh = () => {
+    void fetchLogs(filterModel || undefined, filterProtocol)
+    void fetchTodayStats()
+  }
+
+  const handleSearch = () => {
+    void fetchLogs(filterModel || undefined, filterProtocol)
+  }
+
+  const handleResetFilters = () => {
+    setFilterModel('')
+    setFilterProtocol(undefined)
+    void fetchLogs()
+  }
+
+  const handleViewDetails = (record: LogRecord) => {
+    setCurrentLog(record)
+    setModalVisible(true)
+  }
+
+  const columns: TableColumnsType<LogRecord> = useMemo(
+    () => [
+      {
+        title: 'ID',
+        dataIndex: 'id',
+        key: 'id',
+        width: 60,
+      },
+      {
+        title: '请求时间',
+        dataIndex: 'created_at',
+        key: 'created_at',
+        width: 180,
+        render: (text: string) => dayjs(text).format('YYYY-MM-DD HH:mm:ss'),
+      },
+      {
+        title: '流式',
+        dataIndex: 'is_stream',
+        key: 'is_stream',
+        width: 80,
+        render: (isStream: boolean) => (
+          <Tag color={isStream ? 'purple' : 'default'}>{isStream ? 'YES' : 'NO'}</Tag>
+        ),
+      },
+      {
+        title: '协议',
+        dataIndex: 'protocol',
+        key: 'protocol',
+        width: 100,
+        render: (protocol?: string | null) => {
+          if (!protocol) return '-'
+          return <Tag color={protocol === 'anthropic' ? 'orange' : 'blue'}>{protocol}</Tag>
+        },
+      },
+      {
+        title: '模型',
+        dataIndex: 'model',
+        key: 'model',
+        width: 150,
+      },
+      {
+        title: '状态码',
+        dataIndex: 'status_code',
+        key: 'status_code',
+        width: 90,
+        render: (code?: number | null) => {
+          if (!code) {
+            return '-'
+          }
+          return <Tag color={code === 200 ? 'success' : 'error'}>{code}</Tag>
+        },
+      },
+      {
+        title: '耗时 (ms)',
+        dataIndex: 'processing_time_ms',
+        key: 'processing_time_ms',
+        width: 110,
+        render: (value?: number | null) => value ?? '-',
+      },
+      {
+        title: '输入 Token',        dataIndex: 'prompt_tokens',
+        key: 'prompt_tokens',
+        width: 90,
+        render: (v?: number | null) => v ?? '-',
+      },
+      {
+        title: '输出 Token',
+        dataIndex: 'completion_tokens',
+        key: 'completion_tokens',
+        width: 90,
+        render: (v?: number | null) => v ?? '-',
+      },
+      {
+        title: '总 Token',
+        dataIndex: 'total_tokens',
+        key: 'total_tokens',
+        width: 90,
+        render: (v?: number | null) => v ?? '-',
+      },
+      {
+        title: 'Token/s',
+        key: 'tokens_per_sec',
+        width: 90,
+        render: (_, record) => {
+          const output = record.completion_tokens
+          const ms = record.processing_time_ms
+          if (!output || !ms || ms === 0) return '-'
+          return (output / (ms / 1000)).toFixed(1)
+        },
+      },
+      {
+        title: '操作',
+        key: 'action',
+        width: 100,
+        render: (_, record) => (
+          <Button type="link" onClick={() => handleViewDetails(record)}>
+            查看详情
+          </Button>
+        ),
+      },
+    ],
+    [],
+  )
+
+  return (
+    <div>
+      <div
+        style={{
+          marginBottom: '24px',
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+        }}
+      >
+        <Title level={2} style={{ margin: 0 }}>
+          请求日志
+        </Title>
+        <Space>
+          <Button type="primary" onClick={handleRefresh} loading={loading}>
+            刷新
+          </Button>
+        </Space>
+      </div>
+
+      <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
+        <Col span={6}>
+          <Card><Statistic title="今日请求次数" value={todayStats.requestCount} /></Card>
+        </Col>
+        <Col span={6}>
+          <Card><Statistic title="今日输入 Token" value={todayStats.promptTokens} /></Card>
+        </Col>
+        <Col span={6}>
+          <Card><Statistic title="今日输出 Token" value={todayStats.completionTokens} /></Card>
+        </Col>
+        <Col span={6}>
+          <Card><Statistic title="今日总计 Token" value={todayStats.totalTokens} /></Card>
+        </Col>
+      </Row>
+
+      <Card style={{ marginBottom: 16 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <Space wrap>
+            <Input
+              placeholder="搜索模型"
+              value={filterModel}
+              onChange={e => setFilterModel(e.target.value)}
+              onPressEnter={handleSearch}
+              allowClear
+              style={{ width: 200 }}
+            />
+            <Select
+              placeholder="协议"
+              value={filterProtocol}
+              onChange={v => setFilterProtocol(v)}
+              allowClear
+              style={{ width: 140 }}
+              options={[
+                { value: 'openai', label: 'OpenAI' },
+                { value: 'anthropic', label: 'Anthropic' },
+              ]}
+            />
+            <Button type="primary" onClick={handleSearch} loading={loading}>
+              搜索
+            </Button>
+          </Space>
+          <Button onClick={handleResetFilters}>重置</Button>
+        </div>
+      </Card>
+
+      <Card>
+        <Table
+          columns={columns}
+          dataSource={logs}
+          rowKey="id"
+          loading={loading}
+          pagination={{ pageSize: 20 }}
+        />
+      </Card>
+
+      <Modal
+        title={`日志详情 - ID: ${currentLog?.id ?? ''}`}
+        open={modalVisible}
+        onCancel={() => setModalVisible(false)}
+        footer={null}
+        width="min(82vw, 1380px)"
+        style={{ top: 12 }}
+        styles={{
+          body: {
+            maxHeight: 'calc(94vh - 88px)',
+            overflowY: 'auto',
+            paddingTop: 12,
+          },
+        }}
+      >
+        {currentLog && (
+          <div>
+            <Descriptions bordered size="small" column={4} style={{ marginBottom: 16 }}>
+              <Descriptions.Item label="请求时间">
+                {dayjs(currentLog.created_at).format('YYYY-MM-DD HH:mm:ss')}
+              </Descriptions.Item>
+              <Descriptions.Item label="是否流式">
+                <Tag>{currentLog.is_stream ? 'YES' : 'NO'}</Tag>
+              </Descriptions.Item>
+              <Descriptions.Item label="协议">
+                <Tag color={currentLog.protocol === 'anthropic' ? 'orange' : 'blue'}>
+                  {currentLog.protocol || '-'}
+                </Tag>
+              </Descriptions.Item>
+              <Descriptions.Item label="状态码">
+                <Tag color={currentLog.status_code === 200 ? 'success' : 'error'}>
+                  {currentLog.status_code ?? '-'}
+                </Tag>
+              </Descriptions.Item>
+
+              <Descriptions.Item label="模型">{currentLog.model || '-'}</Descriptions.Item>
+              <Descriptions.Item label="耗时 (ms)">
+                {currentLog.processing_time_ms ?? '-'}
+              </Descriptions.Item>
+              <Descriptions.Item label="Tokens">
+                <Space orientation="vertical" size={0}>
+                  <Text><strong>输入:</strong> {currentLog.prompt_tokens ?? '-'}</Text>
+                  <Text><strong>输出:</strong> {currentLog.completion_tokens ?? '-'}</Text>
+                  <Text><strong>总计:</strong> {currentLog.total_tokens ?? '-'}</Text>
+                </Space>
+              </Descriptions.Item>
+              <Descriptions.Item label="目标 URL">
+                {currentLog.target_url || '-'}
+              </Descriptions.Item>
+            </Descriptions>
+
+            {currentLog.error_message && (
+              <div style={{ marginBottom: 16 }}>
+                <Text type="danger">
+                  <strong>错误信息:</strong> {currentLog.error_message}
+                </Text>
+              </div>
+            )}
+
+            <div
+              style={{
+                display: 'flex',
+                gap: 16,
+                alignItems: 'stretch',
+                flexWrap: 'wrap',
+              }}
+            >
+              <JsonViewer title="Request Data" value={currentLog.request_data} height="70vh" />
+              <JsonViewer title="Response Data" value={currentLog.response_data} height="70vh" />
+            </div>
+          </div>
+        )}
+      </Modal>
+    </div>
+  )
+}
+
+export default LogViewer

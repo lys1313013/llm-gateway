@@ -79,7 +79,6 @@ function JsonViewer({ title, value, height = '70vh' }: JsonViewerProps) {
         }}
       >
         <Text strong>{title}</Text>
-        <Text type="secondary">{viewerContent.isJson ? '支持折叠' : '原样文本'}</Text>
       </div>
       <div
         style={{
