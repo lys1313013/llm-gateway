@@ -41,7 +41,6 @@ def list_models():
 @chat_bp.route('/v1/chat/completions', methods=['POST'])
 def chat_completions():
     try:
-        print("====== HIT CHAT COMPLETIONS ======")
         data = request.json
         model = data.get('model', '')
         

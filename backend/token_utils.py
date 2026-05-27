@@ -81,13 +81,63 @@ def calculate_anthropic_usage(request_data, response_data):
             'total_tokens': input_tokens + output_tokens,
             'prompt_tokens': input_tokens,
             'completion_tokens': output_tokens,
+            'cache_creation_input_tokens': 0,
+            'cache_read_input_tokens': 0,
         }
     except Exception as e:
         logger.error(f"Failed to calculate Anthropic token usage: {e}")
         return {
             'input_tokens': 0, 'output_tokens': 0, 'total_tokens': 0,
             'prompt_tokens': 0, 'completion_tokens': 0,
+            'cache_creation_input_tokens': 0, 'cache_read_input_tokens': 0,
         }
+
+
+def normalize_usage(usage):
+    """
+    标准化 usage 对象，统一 Anthropic 和 OpenAI 两种协议。
+
+    返回 dict: {prompt_tokens, completion_tokens, total_tokens, raw}
+    - Anthropic: prompt_tokens = input_tokens + cache_creation + cache_read
+    - OpenAI:    prompt_tokens 保持原值（API 已含缓存部分）
+
+    如果 usage 为空或无法识别，返回 None。
+    """
+    if not usage:
+        return None
+
+    raw = usage
+    result = {'raw': raw}
+
+    # Anthropic 格式：包含 input_tokens / output_tokens
+    if 'input_tokens' in usage:
+        input_t        = usage.get('input_tokens', 0)
+        cache_create   = usage.get('cache_creation_input_tokens', 0)
+        cache_read     = usage.get('cache_read_input_tokens', 0)
+        output_t       = usage.get('output_tokens', 0)
+        result['prompt_tokens']     = input_t + cache_create + cache_read
+        result['completion_tokens'] = output_t
+        result['total_tokens']      = result['prompt_tokens'] + output_t
+        result['cache_creation_input_tokens'] = cache_create
+        result['cache_read_input_tokens']     = cache_read
+
+    # OpenAI 格式：包含 prompt_tokens / completion_tokens
+    elif 'prompt_tokens' in usage:
+        result['prompt_tokens']     = usage.get('prompt_tokens', 0)
+        result['completion_tokens'] = usage.get('completion_tokens', 0)
+        result['total_tokens']      = usage.get(
+            'total_tokens',
+            result['prompt_tokens'] + result['completion_tokens'],
+        )
+        # OpenAI 缓存命中信息在 prompt_tokens_details 中（如有）
+        prompt_details = usage.get('prompt_tokens_details', {})
+        result['cache_read_input_tokens'] = prompt_details.get('cached_tokens', 0) if prompt_details else 0
+        result['cache_creation_input_tokens'] = 0
+
+    else:
+        return None
+
+    return result
 
 
 def calculate_usage(request_data, response_data):

@@ -18,6 +18,8 @@ type LogRecord = {
   prompt_tokens?: number | null
   completion_tokens?: number | null
   total_tokens?: number | null
+  cache_creation_input_tokens?: number | null
+  cache_read_input_tokens?: number | null
   target_url?: string | null
   request_data?: unknown
   response_data?: unknown
@@ -160,6 +162,13 @@ const LogViewer = () => {
         render: (v?: number | null) => v ?? '-',
       },
       {
+        title: '输入（命中缓存）',
+        dataIndex: 'cache_read_input_tokens',
+        key: 'cache_read_input_tokens',
+        width: 90,
+        render: (v?: number | null) => v ?? '-',
+      },
+      {
         title: '输出 Token',
         dataIndex: 'completion_tokens',
         key: 'completion_tokens',
@@ -170,6 +179,13 @@ const LogViewer = () => {
         title: '总 Token',
         dataIndex: 'total_tokens',
         key: 'total_tokens',
+        width: 90,
+        render: (v?: number | null) => v ?? '-',
+      },
+      {
+        title: '缓存创建',
+        dataIndex: 'cache_creation_input_tokens',
+        key: 'cache_creation_input_tokens',
         width: 90,
         render: (v?: number | null) => v ?? '-',
       },
@@ -314,9 +330,11 @@ const LogViewer = () => {
               </Descriptions.Item>
               <Descriptions.Item label="Tokens">
                 <Space orientation="vertical" size={0}>
-                  <Text><strong>输入:</strong> {currentLog.prompt_tokens ?? '-'}</Text>
+                  <Text><strong>输入（未命中缓存）:</strong> {currentLog.prompt_tokens ?? '-'}</Text>
+                  <Text><strong>输入（命中缓存）:</strong> {currentLog.cache_read_input_tokens ?? '-'}</Text>
                   <Text><strong>输出:</strong> {currentLog.completion_tokens ?? '-'}</Text>
                   <Text><strong>总计:</strong> {currentLog.total_tokens ?? '-'}</Text>
+                  <Text><strong>缓存创建:</strong> {currentLog.cache_creation_input_tokens ?? '-'}</Text>
                 </Space>
               </Descriptions.Item>
               <Descriptions.Item label="目标 URL">

@@ -85,7 +85,7 @@ const App = () => {
       >
         <div style={{ padding: '20px 16px', textAlign: 'center' }}>
           <Title level={4} style={{ color: '#1890ff', margin: 0 }}>
-            Mock OpenAI
+            LLM Gateway
           </Title>
         </div>
         <Menu

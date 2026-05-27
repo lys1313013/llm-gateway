@@ -53,14 +53,11 @@ def init_db():
                 request_data JSONB,
                 response_data JSONB,
                 error_message TEXT,
-                protocol VARCHAR(50)
+                protocol VARCHAR(50),
+                usage_data JSONB,
+                cache_creation_input_tokens INTEGER,
+                cache_read_input_tokens INTEGER
             );
-
-            -- 迁移：删除已废弃的 mode 字段
-            ALTER TABLE api_logs DROP COLUMN IF EXISTS mode;
-
-            -- 迁移：添加 protocol 字段
-            ALTER TABLE api_logs ADD COLUMN IF NOT EXISTS protocol VARCHAR(50);
             
             CREATE TABLE IF NOT EXISTS provider (
                 id SERIAL PRIMARY KEY,
@@ -98,59 +95,15 @@ def init_db():
                 create_time TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                 update_time TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
             );
-
-            -- Migrate: add test time columns if not exists
-            ALTER TABLE exposed_model ADD COLUMN IF NOT EXISTS last_openai_test_time TIMESTAMP WITH TIME ZONE;
-            ALTER TABLE exposed_model ADD COLUMN IF NOT EXISTS last_anthropic_test_time TIMESTAMP WITH TIME ZONE;
             """)
         conn.commit()
         logger.info("Database initialized successfully.")
-        
-        # Run migration if needed
-        migrate_config_to_db(conn)
-        
+
     except Exception as e:
         conn.rollback()
         logger.error(f"Failed to initialize database table: {e}")
     finally:
         conn.close()
-
-def migrate_config_to_db(conn):
-    """Migrate config.json to database if tables are empty"""
-    try:
-        with conn.cursor() as cur:
-            cur.execute("SELECT COUNT(*) FROM provider")
-            if cur.fetchone()[0] > 0:
-                return
-
-            if not os.path.exists('config.json'):
-                return
-
-            with open('config.json', 'r') as f:
-                config = json.load(f)
-
-            # Migrate proxy config
-            proxy_config = config.get('proxy_config', {})
-            provider_id = None
-            if proxy_config:
-                cur.execute("""
-                    INSERT INTO provider (name, base_url, api_key, protocol)
-                    VALUES (%s, %s, %s, %s) RETURNING id
-                """, ('Default Provider', proxy_config.get('target_url', ''), proxy_config.get('api_key', ''), 'openai'))
-                provider_id = cur.fetchone()[0]
-
-            # Insert a default proxy route
-            cur.execute("""
-                INSERT INTO model_route (model_pattern, route_type, provider_id, timeout, log_requests, log_responses, is_active)
-                VALUES (%s, %s, %s, %s, %s, %s, %s)
-            """, ('*', 'proxy', provider_id, proxy_config.get('timeout', 60),
-                  proxy_config.get('log_requests', True), proxy_config.get('log_responses', True), True))
-
-            conn.commit()
-            logger.info("Migrated config.json to database successfully.")
-    except Exception as e:
-        conn.rollback()
-        logger.error(f"Failed to migrate config.json: {e}")
 
 def insert_log(log_data: dict):
     """Insert a new log entry into api_logs table"""
@@ -164,23 +117,30 @@ def insert_log(log_data: dict):
             INSERT INTO api_logs (
                 model, is_stream, status_code, processing_time_ms,
                 prompt_tokens, completion_tokens, total_tokens, target_url,
-                request_data, response_data, error_message, protocol
+                request_data, response_data, error_message, protocol, usage_data,
+                cache_creation_input_tokens, cache_read_input_tokens
             ) VALUES (
                 %(model)s, %(is_stream)s, %(status_code)s, %(processing_time_ms)s,
                 %(prompt_tokens)s, %(completion_tokens)s, %(total_tokens)s, %(target_url)s,
-                %(request_data)s, %(response_data)s, %(error_message)s, %(protocol)s
+                %(request_data)s, %(response_data)s, %(error_message)s, %(protocol)s,
+                %(usage_data)s,
+                %(cache_creation_input_tokens)s, %(cache_read_input_tokens)s
             )
             """
-            
+
             # Serialize JSON fields if they are dicts
             req_data = log_data.get('request_data')
             if req_data is not None and not isinstance(req_data, str):
                 req_data = json.dumps(req_data)
-                
+
             res_data = log_data.get('response_data')
             if res_data is not None and not isinstance(res_data, str):
                 res_data = json.dumps(res_data)
-                
+
+            usage_data = log_data.get('usage_data')
+            if usage_data is not None and not isinstance(usage_data, str):
+                usage_data = json.dumps(usage_data)
+
             data_to_insert = {
                 'model': log_data.get('model'),
                 'is_stream': log_data.get('is_stream', False),
@@ -193,7 +153,10 @@ def insert_log(log_data: dict):
                 'request_data': req_data,
                 'response_data': res_data,
                 'error_message': log_data.get('error_message'),
-                'protocol': log_data.get('protocol')
+                'protocol': log_data.get('protocol'),
+                'usage_data': usage_data,
+                'cache_creation_input_tokens': log_data.get('cache_creation_input_tokens'),
+                'cache_read_input_tokens': log_data.get('cache_read_input_tokens'),
             }
             
             cur.execute(query, data_to_insert)
@@ -230,7 +193,8 @@ def get_logs(limit=50, offset=0, model=None, protocol=None):
                 SELECT id, created_at, updated_at, model, is_stream,
                        status_code, processing_time_ms, prompt_tokens,
                        completion_tokens, total_tokens, target_url,
-                       request_data, response_data, error_message, protocol
+                       request_data, response_data, error_message, protocol,
+                       usage_data, cache_creation_input_tokens, cache_read_input_tokens
                 FROM api_logs
                 {where_clause}
                 ORDER BY created_at DESC

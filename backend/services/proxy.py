@@ -4,7 +4,7 @@ import requests
 import time
 from flask import Response, jsonify
 from db import insert_log
-from token_utils import calculate_usage
+from token_utils import calculate_usage, normalize_usage
 
 logger = logging.getLogger(__name__)
 
@@ -143,20 +143,24 @@ def forward_stream_response(response, request_data, proxy_config, start_time, lo
         # Log to DB
         processing_time_ms = int((time.time() - start_time) * 1000)
         usage = aggregated.get('usage', {})
-        if not usage or ('total_tokens' not in usage and 'prompt_tokens' not in usage):
-            usage = calculate_usage(request_data, aggregated)
+        norm = normalize_usage(usage)
+        if not norm:
+            norm = normalize_usage(calculate_usage(request_data, aggregated))
         insert_log({
             'model': request_data.get('model'),
             'is_stream': True,
             'status_code': response.status_code,
             'processing_time_ms': processing_time_ms,
-            'prompt_tokens': usage.get('prompt_tokens'),
-            'completion_tokens': usage.get('completion_tokens'),
-            'total_tokens': usage.get('total_tokens'),
+            'prompt_tokens': norm['prompt_tokens'],
+            'completion_tokens': norm['completion_tokens'],
+            'total_tokens': norm['total_tokens'],
+            'cache_creation_input_tokens': norm.get('cache_creation_input_tokens'),
+            'cache_read_input_tokens': norm.get('cache_read_input_tokens'),
             'target_url': proxy_config.get('target_url'),
             'request_data': request_data,
             'response_data': aggregated,
             'protocol': proxy_config.get('protocol'),
+            'usage_data': norm['raw'],
         })
 
 
@@ -200,21 +204,25 @@ def handle_proxy_request(request_data, proxy_config):
             resp_json = response.json()
             processing_time_ms = int((time.time() - start_time) * 1000)
             usage = resp_json.get('usage', {})
-            if not usage or ('total_tokens' not in usage and 'prompt_tokens' not in usage):
-                usage = calculate_usage(request_data, resp_json)
-            
+            norm = normalize_usage(usage)
+            if not norm:
+                norm = normalize_usage(calculate_usage(request_data, resp_json))
+
             insert_log({
                 'model': request_data.get('model'),
                 'is_stream': False,
                 'status_code': 200,
                 'processing_time_ms': processing_time_ms,
-                'prompt_tokens': usage.get('prompt_tokens'),
-                'completion_tokens': usage.get('completion_tokens'),
-                'total_tokens': usage.get('total_tokens'),
+                'prompt_tokens': norm['prompt_tokens'],
+                'completion_tokens': norm['completion_tokens'],
+                'total_tokens': norm['total_tokens'],
+                'cache_creation_input_tokens': norm.get('cache_creation_input_tokens'),
+                'cache_read_input_tokens': norm.get('cache_read_input_tokens'),
                 'target_url': proxy_config.get('target_url'),
                 'request_data': request_data,
                 'response_data': resp_json,
                 'protocol': proxy_config.get('protocol'),
+                'usage_data': norm['raw'],
             })
             return jsonify(resp_json), 200
             
