@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Button, Card, Form, Input, Modal, Popconfirm, Radio, Space, Table, message } from 'antd'
 import type { TableColumnsType } from 'antd'
 import dayjs from 'dayjs'
+import { apiFetch } from './api'
 
 export type ProviderRecord = {
   id: number
@@ -24,7 +25,7 @@ const ConfigProvider = () => {
   const fetchData = async () => {
     setLoading(true)
     try {
-      const res = await fetch('/api/provider')
+      const res = await apiFetch('/api/provider')
       const json = await res.json()
       if (json.success) setData(json.data)
     } catch (e) {
@@ -53,7 +54,7 @@ const ConfigProvider = () => {
 
   const handleDelete = async (id: number) => {
     try {
-      const res = await fetch(`/api/provider/${id}`, { method: 'DELETE' })
+      const res = await apiFetch(`/api/provider/${id}`, { method: 'DELETE' })
       const json = await res.json()
       if (json.success) {
         message.success('删除成功')
@@ -73,7 +74,7 @@ const ConfigProvider = () => {
       const url = isEdit ? `/api/provider/${editingRecord.id}` : '/api/provider'
       const method = isEdit ? 'PUT' : 'POST'
 
-      const res = await fetch(url, {
+      const res = await apiFetch(url, {
         method,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(values),

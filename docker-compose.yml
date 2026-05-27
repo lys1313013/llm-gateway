@@ -9,10 +9,11 @@ services:
       # - 宿主机自建 PG：DB_HOST=host.docker.internal (macOS/Windows) 或宿主机 IP
       DB_HOST: ${DB_HOST:-llm_gateway_postgres}
       DB_PORT: ${DB_PORT:-5432}
-      DB_NAME: ${DB_NAME:-mock_openai}
+      DB_NAME: ${DB_NAME:-llm_gateway}
       DB_USER: ${DB_USER:-postgres}
       DB_PASSWORD: ${DB_PASSWORD:-password}
       DB_TIMEZONE: Asia/Shanghai
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-change-me-to-a-random-secret-string}
     ports:
       - "5001:5001"
     networks:

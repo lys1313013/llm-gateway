@@ -3,6 +3,7 @@ import { Button, Card, Col, Form, Input, InputNumber, Modal, Popconfirm, Row, Se
 import type { TableColumnsType } from 'antd'
 import dayjs from 'dayjs'
 import type { ProviderRecord } from './ConfigProvider'
+import { apiFetch } from './api'
 
 export type RouteRecord = {
   id: number
@@ -31,8 +32,8 @@ const ConfigRoute = () => {
     setLoading(true)
     try {
       const [resRoutes, resProviders] = await Promise.all([
-        fetch('/api/route'),
-        fetch('/api/provider')
+        apiFetch('/api/route'),
+        apiFetch('/api/provider')
       ])
       const [jsonRoutes, jsonProviders] = await Promise.all([
         resRoutes.json(),
@@ -82,7 +83,7 @@ const ConfigRoute = () => {
 
   const handleDelete = async (id: number) => {
     try {
-      const res = await fetch(`/api/route/${id}`, { method: 'DELETE' })
+      const res = await apiFetch(`/api/route/${id}`, { method: 'DELETE' })
       const json = await res.json()
       if (json.success) {
         message.success('删除成功')
@@ -107,7 +108,7 @@ const ConfigRoute = () => {
       const url = isEdit ? `/api/route/${editingRecord.id}` : '/api/route'
       const method = isEdit ? 'PUT' : 'POST'
 
-      const res = await fetch(url, {
+      const res = await apiFetch(url, {
         method,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(values),

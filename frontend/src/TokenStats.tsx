@@ -4,6 +4,7 @@ import type { TableColumnsType } from 'antd'
 import { Column, Pie } from '@ant-design/plots'
 import dayjs from 'dayjs'
 import type { Dayjs } from 'dayjs'
+import { apiFetch } from './api'
 
 const { RangePicker } = DatePicker
 const { Title } = Typography
@@ -64,7 +65,7 @@ const TokenStats = () => {
       if (start) query.append('start_date', start)
       if (end) query.append('end_date', end)
       
-      const response = await fetch(`/api/stats/daily_tokens?${query.toString()}`)
+      const response = await apiFetch(`/api/stats/daily_tokens?${query.toString()}`)
       const result = await response.json()
       
       if (result.success) {

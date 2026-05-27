@@ -3,6 +3,7 @@ import { Button, Card, Dropdown, Form, Input, Modal, Popconfirm, Progress, Space
 import { DownOutlined, LoadingOutlined, ThunderboltOutlined } from '@ant-design/icons'
 import type { TableColumnsType } from 'antd'
 import dayjs from 'dayjs'
+import { apiFetch } from './api'
 
 export type ExposedModelRecord = {
   id: number
@@ -135,7 +136,7 @@ const ConfigExposedModel = () => {
   const fetchData = async (signal?: AbortSignal) => {
     setLoading(true)
     try {
-      const res = await fetch('/api/exposed_model', signal ? { signal } : undefined)
+      const res = await apiFetch('/api/exposed_model', signal ? { signal } : undefined)
       const json = await res.json()
       if (json.success) setData(json.data)
     } catch (e) {
@@ -168,7 +169,7 @@ const ConfigExposedModel = () => {
 
   const handleDelete = async (id: number) => {
     try {
-      const res = await fetch(`/api/exposed_model/${id}`, { method: 'DELETE' })
+      const res = await apiFetch(`/api/exposed_model/${id}`, { method: 'DELETE' })
       const json = await res.json()
       if (json.success) {
         message.success('删除成功')
@@ -183,7 +184,7 @@ const ConfigExposedModel = () => {
 
   const handleToggleActive = async (record: ExposedModelRecord) => {
     try {
-      const res = await fetch(`/api/exposed_model/${record.id}`, {
+      const res = await apiFetch(`/api/exposed_model/${record.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ is_active: !record.is_active }),
@@ -206,7 +207,7 @@ const ConfigExposedModel = () => {
       const url = isEdit ? `/api/exposed_model/${editingRecord.id}` : '/api/exposed_model'
       const method = isEdit ? 'PUT' : 'POST'
 
-      const res = await fetch(url, {
+      const res = await apiFetch(url, {
         method,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(values),
@@ -237,7 +238,7 @@ const ConfigExposedModel = () => {
 
       if (!result.error && result.status === 200) {
         try {
-          await fetch(`/api/exposed_model/${record.id}/test_time`, {
+          await apiFetch(`/api/exposed_model/${record.id}/test_time`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ protocol }),
@@ -311,7 +312,7 @@ const ConfigExposedModel = () => {
       // Batch update test_time for successful results
       const successResults = results.filter((r) => r.status === 200 && !r.error)
       const updatePromises = successResults.map((r) =>
-        fetch(`/api/exposed_model/${r.modelDbId}/test_time`, {
+        apiFetch(`/api/exposed_model/${r.modelDbId}/test_time`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ protocol: r.protocol }),
