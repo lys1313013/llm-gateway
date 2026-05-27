@@ -3,6 +3,7 @@ import { Button, Card, Col, Descriptions, Input, Modal, Row, Select, Space, Stat
 import type { TableColumnsType } from 'antd'
 import dayjs from 'dayjs'
 import JsonViewer from './JsonViewer'
+import { apiFetch } from './api'
 
 const { Title, Text } = Typography
 
@@ -37,7 +38,7 @@ const LogViewer = () => {
 
   const fetchTodayStats = async () => {
     try {
-      const res = await fetch('/api/logs/today_stats')
+      const res = await apiFetch('/api/logs/today_stats')
       const result = await res.json()
       if (result.success) {
         setTodayStats({
@@ -58,7 +59,7 @@ const LogViewer = () => {
       const params = new URLSearchParams({ limit: '100' })
       if (model) params.append('model', model)
       if (protocol) params.append('protocol', protocol)
-      const response = await fetch(`/api/logs?${params}`)
+      const response = await apiFetch(`/api/logs?${params}`)
       const result = await response.json()
       if (result.success) {
         setLogs(result.data as LogRecord[])

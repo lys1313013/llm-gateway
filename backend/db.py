@@ -163,6 +163,27 @@ def init_db():
                 create_time TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                 update_time TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
             );
+
+            CREATE TABLE IF NOT EXISTS users (
+                id SERIAL PRIMARY KEY,
+                username VARCHAR(100) UNIQUE NOT NULL,
+                password_hash VARCHAR(255) NOT NULL,
+                is_active BOOLEAN DEFAULT TRUE,
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS api_keys (
+                id SERIAL PRIMARY KEY,
+                user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                key_hash VARCHAR(255) NOT NULL,
+                key_prefix VARCHAR(16) NOT NULL,
+                name VARCHAR(100) NOT NULL DEFAULT 'default',
+                is_active BOOLEAN DEFAULT TRUE,
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                last_used_at TIMESTAMP WITH TIME ZONE
+            );
+            CREATE INDEX IF NOT EXISTS idx_api_keys_key_hash ON api_keys(key_hash);
             """)
             # Migrate: add columns that may be missing from older schemas
             for alter_sql in [
@@ -849,5 +870,275 @@ def get_active_exposed_models():
     except Exception as e:
         logger.error(f"Failed to get active exposed models: {e}")
         return []
+    finally:
+        _release(conn)
+
+
+# ---------------------------------------------------------------------------
+# CRUD: users
+# ---------------------------------------------------------------------------
+_USER_TIME_FIELDS = ('created_at', 'updated_at')
+
+
+def create_user(username, password_hash):
+    conn = get_db_connection()
+    if not conn:
+        return None
+    try:
+        with conn.cursor(row_factory=dict_row) as cur:
+            cur.execute("""
+                INSERT INTO users (username, password_hash)
+                VALUES (%s, %s) RETURNING id, username, is_active, created_at, updated_at
+            """, (username, password_hash))
+            row = cur.fetchone()
+            conn.commit()
+            _isoformat_fields(row, _USER_TIME_FIELDS)
+            return row
+    except Exception as e:
+        conn.rollback()
+        logger.error(f"Failed to create user: {e}")
+        return None
+    finally:
+        _release(conn)
+
+
+def get_user_by_username(username):
+    conn = get_db_connection()
+    if not conn:
+        return None
+    try:
+        with conn.cursor(row_factory=dict_row) as cur:
+            cur.execute("""
+                SELECT id, username, password_hash, is_active, created_at, updated_at
+                FROM users WHERE username = %s
+            """, (username,))
+            row = cur.fetchone()
+            _isoformat_fields(row, _USER_TIME_FIELDS)
+            return row
+    except Exception as e:
+        logger.error(f"Failed to get user by username: {e}")
+        return None
+    finally:
+        _release(conn)
+
+
+def get_user_by_id(user_id):
+    conn = get_db_connection()
+    if not conn:
+        return None
+    try:
+        with conn.cursor(row_factory=dict_row) as cur:
+            cur.execute("""
+                SELECT id, username, is_active, created_at, updated_at
+                FROM users WHERE id = %s
+            """, (user_id,))
+            row = cur.fetchone()
+            _isoformat_fields(row, _USER_TIME_FIELDS)
+            return row
+    except Exception as e:
+        logger.error(f"Failed to get user by id: {e}")
+        return None
+    finally:
+        _release(conn)
+
+
+def get_users():
+    conn = get_db_connection()
+    if not conn:
+        return []
+    try:
+        with conn.cursor(row_factory=dict_row) as cur:
+            cur.execute("""
+                SELECT id, username, is_active, created_at, updated_at
+                FROM users ORDER BY id ASC
+            """)
+            rows = cur.fetchall()
+            for r in rows:
+                _isoformat_fields(r, _USER_TIME_FIELDS)
+            return rows
+    except Exception as e:
+        logger.error(f"Failed to get users: {e}")
+        return []
+    finally:
+        _release(conn)
+
+
+def update_user_password(user_id, password_hash):
+    conn = get_db_connection()
+    if not conn:
+        return False
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE users SET password_hash = %s, updated_at = CURRENT_TIMESTAMP
+                WHERE id = %s
+            """, (password_hash, user_id))
+            conn.commit()
+            return cur.rowcount > 0
+    except Exception as e:
+        conn.rollback()
+        logger.error(f"Failed to update user password: {e}")
+        return False
+    finally:
+        _release(conn)
+
+
+def delete_user(user_id):
+    conn = get_db_connection()
+    if not conn:
+        return False
+    try:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM users WHERE id = %s", (user_id,))
+            conn.commit()
+            return cur.rowcount > 0
+    except Exception as e:
+        conn.rollback()
+        logger.error(f"Failed to delete user: {e}")
+        return False
+    finally:
+        _release(conn)
+
+
+def get_user_count():
+    conn = get_db_connection()
+    if not conn:
+        return 0
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT COUNT(*) FROM users")
+            return cur.fetchone()[0]
+    except Exception as e:
+        logger.error(f"Failed to get user count: {e}")
+        return 0
+    finally:
+        _release(conn)
+
+
+# ---------------------------------------------------------------------------
+# CRUD: api_keys
+# ---------------------------------------------------------------------------
+_API_KEY_TIME_FIELDS = ('created_at', 'last_used_at')
+
+
+def create_api_key(user_id, key_hash, key_prefix, name='default'):
+    conn = get_db_connection()
+    if not conn:
+        return None
+    try:
+        with conn.cursor(row_factory=dict_row) as cur:
+            cur.execute("""
+                INSERT INTO api_keys (user_id, key_hash, key_prefix, name)
+                VALUES (%s, %s, %s, %s)
+                RETURNING id, user_id, key_prefix, name, is_active, created_at, last_used_at
+            """, (user_id, key_hash, key_prefix, name))
+            row = cur.fetchone()
+            conn.commit()
+            _isoformat_fields(row, _API_KEY_TIME_FIELDS)
+            return row
+    except Exception as e:
+        conn.rollback()
+        logger.error(f"Failed to create api key: {e}")
+        return None
+    finally:
+        _release(conn)
+
+
+def get_api_keys_by_user(user_id):
+    conn = get_db_connection()
+    if not conn:
+        return []
+    try:
+        with conn.cursor(row_factory=dict_row) as cur:
+            cur.execute("""
+                SELECT id, user_id, key_prefix, name, is_active, created_at, last_used_at
+                FROM api_keys WHERE user_id = %s ORDER BY id DESC
+            """, (user_id,))
+            rows = cur.fetchall()
+            for r in rows:
+                _isoformat_fields(r, _API_KEY_TIME_FIELDS)
+            return rows
+    except Exception as e:
+        logger.error(f"Failed to get api keys: {e}")
+        return []
+    finally:
+        _release(conn)
+
+
+def get_api_key_by_hash(key_hash):
+    conn = get_db_connection()
+    if not conn:
+        return None
+    try:
+        with conn.cursor(row_factory=dict_row) as cur:
+            cur.execute("""
+                SELECT k.id, k.user_id, k.key_prefix, k.name, k.is_active,
+                       k.created_at, k.last_used_at, u.username, u.is_active AS user_active
+                FROM api_keys k
+                JOIN users u ON k.user_id = u.id
+                WHERE k.key_hash = %s
+            """, (key_hash,))
+            row = cur.fetchone()
+            _isoformat_fields(row, _API_KEY_TIME_FIELDS)
+            return row
+    except Exception as e:
+        logger.error(f"Failed to get api key by hash: {e}")
+        return None
+    finally:
+        _release(conn)
+
+
+def update_api_key_last_used(key_id):
+    conn = get_db_connection()
+    if not conn:
+        return
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE api_keys SET last_used_at = CURRENT_TIMESTAMP WHERE id = %s
+            """, (key_id,))
+            conn.commit()
+    except Exception as e:
+        conn.rollback()
+        logger.error(f"Failed to update api key last_used: {e}")
+    finally:
+        _release(conn)
+
+
+def delete_api_key(key_id):
+    conn = get_db_connection()
+    if not conn:
+        return False
+    try:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM api_keys WHERE id = %s", (key_id,))
+            conn.commit()
+            return cur.rowcount > 0
+    except Exception as e:
+        conn.rollback()
+        logger.error(f"Failed to delete api key: {e}")
+        return False
+    finally:
+        _release(conn)
+
+
+def toggle_api_key(key_id, is_active):
+    conn = get_db_connection()
+    if not conn:
+        return None
+    try:
+        with conn.cursor(row_factory=dict_row) as cur:
+            cur.execute("""
+                UPDATE api_keys SET is_active = %s WHERE id = %s
+                RETURNING id, user_id, key_prefix, name, is_active, created_at, last_used_at
+            """, (is_active, key_id))
+            row = cur.fetchone()
+            conn.commit()
+            _isoformat_fields(row, _API_KEY_TIME_FIELDS)
+            return row
+    except Exception as e:
+        conn.rollback()
+        logger.error(f"Failed to toggle api key: {e}")
+        return None
     finally:
         _release(conn)

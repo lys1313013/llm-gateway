@@ -4,8 +4,8 @@ services:
     container_name: llm_gateway_postgres
     environment:
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: password
-      POSTGRES_DB: mock_openai
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-password}
+      POSTGRES_DB: ${DB_NAME:-llm_gateway}
     ports:
       - "5432:5432"
     volumes:
