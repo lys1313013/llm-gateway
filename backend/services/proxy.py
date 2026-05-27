@@ -92,7 +92,7 @@ def _aggregate_stream_chunks(chunks):
             if 'name' in delta['function_call'] and delta['function_call']['name']:
                 function_call['name'] += delta['function_call']['name']
             if 'arguments' in delta['function_call'] and delta['function_call']['arguments']:
-                function_call['arguments'] += delta['function_call']['arguments']
+                function_call['arguments'] += delta['function_call']['arguments'] or ''
                 
         if 'tool_calls' in delta:
             for tc in delta['tool_calls']:
@@ -109,7 +109,7 @@ def _aggregate_stream_chunks(chunks):
                     if 'name' in tc['function'] and tc['function']['name']:
                         tool_calls[idx]['function']['name'] += tc['function']['name']
                     if 'arguments' in tc['function'] and tc['function']['arguments']:
-                        tool_calls[idx]['function']['arguments'] += tc['function']['arguments']
+                        tool_calls[idx]['function']['arguments'] += tc['function']['arguments'] or ''
                         
     if has_function_call:
         aggregated['function_call'] = function_call
@@ -146,22 +146,25 @@ def forward_stream_response(response, request_data, proxy_config, start_time, lo
         norm = normalize_usage(usage)
         if not norm:
             norm = normalize_usage(calculate_usage(request_data, aggregated))
-        insert_log({
-            'model': request_data.get('model'),
-            'is_stream': True,
-            'status_code': response.status_code,
-            'processing_time_ms': processing_time_ms,
-            'prompt_tokens': norm['prompt_tokens'],
-            'completion_tokens': norm['completion_tokens'],
-            'total_tokens': norm['total_tokens'],
-            'cache_creation_input_tokens': norm.get('cache_creation_input_tokens'),
-            'cache_read_input_tokens': norm.get('cache_read_input_tokens'),
-            'target_url': proxy_config.get('target_url'),
-            'request_data': request_data,
-            'response_data': aggregated,
-            'protocol': proxy_config.get('protocol'),
-            'usage_data': norm['raw'],
-        })
+        try:
+            insert_log({
+                'model': request_data.get('model'),
+                'is_stream': True,
+                'status_code': response.status_code,
+                'processing_time_ms': processing_time_ms,
+                'prompt_tokens': norm['prompt_tokens'],
+                'completion_tokens': norm['completion_tokens'],
+                'total_tokens': norm['total_tokens'],
+                'cache_creation_input_tokens': norm.get('cache_creation_input_tokens'),
+                'cache_read_input_tokens': norm.get('cache_read_input_tokens'),
+                'target_url': proxy_config.get('target_url'),
+                'request_data': request_data,
+                'response_data': aggregated,
+                'protocol': proxy_config.get('protocol'),
+                'usage_data': norm['raw'],
+            })
+        except Exception as e:
+            logger.error(f"[PROXY] Failed to log stream response: {e}")
 
 
 def handle_proxy_request(request_data, proxy_config):
@@ -179,7 +182,7 @@ def handle_proxy_request(request_data, proxy_config):
             
             try:
                 error_resp = response.json()
-            except:
+            except Exception:
                 error_resp = response.text
                 
             insert_log({

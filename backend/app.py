@@ -1,32 +1,47 @@
 import argparse
 import logging
+import os
+
 from flask import Flask, jsonify, request
 from flask_cors import CORS
-from db import init_db, get_logs, get_today_stats, get_daily_token_stats, get_hourly_token_stats, get_model_token_stats
+
+from db import (
+    init_db, get_logs, get_today_stats,
+    get_daily_token_stats, get_hourly_token_stats, get_model_token_stats,
+)
 from routes.chat import chat_bp
 from routes.admin import admin_bp
 from routes.anthropic import anthropic_bp
 
-# 配置日志
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+# ---------------------------------------------------------------------------
+# Logging
+# ---------------------------------------------------------------------------
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+)
 logger = logging.getLogger(__name__)
 
+# ---------------------------------------------------------------------------
+# Flask app
+# ---------------------------------------------------------------------------
 app = Flask(__name__)
-CORS(app)  # 添加CORS支持
+CORS(app)
 
-# 注册 Blueprint
 app.register_blueprint(chat_bp)
 app.register_blueprint(admin_bp)
 app.register_blueprint(anthropic_bp)
 
+# ---------------------------------------------------------------------------
+# Admin / stats API
+# ---------------------------------------------------------------------------
 @app.route('/api/logs', methods=['GET'])
 def api_logs():
     try:
         limit = int(request.args.get('limit', 50))
         offset = int(request.args.get('offset', 0))
     except ValueError:
-        limit = 50
-        offset = 0
+        limit, offset = 50, 0
 
     model = request.args.get('model') or None
     protocol = request.args.get('protocol') or None
@@ -39,7 +54,7 @@ def api_logs():
 def api_today_stats():
     stats = get_today_stats()
     if stats is None:
-        return jsonify({'success': False, 'message': '获取统计失败'})
+        return jsonify({'success': False, 'message': 'Failed to get stats'})
     return jsonify({'success': True, 'data': stats})
 
 
@@ -59,8 +74,8 @@ def api_daily_token_stats():
                 'hourly': hourly_stats,
                 'daily': [],
                 'models': model_stats,
-                'is_single_day': True
-            }
+                'is_single_day': True,
+            },
         })
     else:
         daily_stats = get_daily_token_stats(start_date=start_date, end_date=end_date)
@@ -71,16 +86,24 @@ def api_daily_token_stats():
                 'hourly': [],
                 'daily': daily_stats,
                 'models': model_stats,
-                'is_single_day': False
-            }
+                'is_single_day': False,
+            },
         })
 
+
+# ---------------------------------------------------------------------------
+# Initialise schema (runs on import — works for both `python app.py` and gunicorn)
+# ---------------------------------------------------------------------------
+init_db()
+
+# ---------------------------------------------------------------------------
+# Entry-point (direct execution only)
+# ---------------------------------------------------------------------------
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description='Mock OpenAI API Server')
-    parser.add_argument('--port', type=int, default=5001, help='Port to run the server on (default: 5001)')
+    parser = argparse.ArgumentParser(description='LLM Gateway API Server')
+    parser.add_argument('--port', type=int, default=5001,
+                        help='Port to listen on (default: 5001)')
     args = parser.parse_args()
-    
-    # 初始化数据库
-    init_db()
-    
-    app.run(host='0.0.0.0', port=args.port, debug=True)
+
+    debug = os.environ.get('FLASK_DEBUG', 'false').lower() in ('1', 'true', 'yes')
+    app.run(host='0.0.0.0', port=args.port, debug=debug)

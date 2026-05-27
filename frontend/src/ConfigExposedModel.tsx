@@ -132,21 +132,25 @@ const ConfigExposedModel = () => {
   const [batchProgress, setBatchProgress] = useState({ done: 0, total: 0 })
   const batchRunningRef = useRef(false)
 
-  const fetchData = async () => {
+  const fetchData = async (signal?: AbortSignal) => {
     setLoading(true)
     try {
-      const res = await fetch('/api/exposed_model')
+      const res = await fetch('/api/exposed_model', signal ? { signal } : undefined)
       const json = await res.json()
       if (json.success) setData(json.data)
     } catch (e) {
-      message.error('获取模型列表失败')
+      if (e instanceof Error && e.name !== 'AbortError') {
+        message.error('获取模型列表失败')
+      }
     } finally {
       setLoading(false)
     }
   }
 
   useEffect(() => {
-    void fetchData()
+    const controller = new AbortController()
+    void fetchData(controller.signal)
+    return () => controller.abort()
   }, [])
 
   const handleAdd = () => {

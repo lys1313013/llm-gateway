@@ -42,12 +42,13 @@ def list_models():
 def chat_completions():
     try:
         data = request.json
+        if not data:
+            return jsonify({'error': {'message': 'Request body must be JSON', 'type': 'invalid_request_error'}}), 400
+
         model = data.get('model', '')
-        
+
         # 兼容同名 Header 的多值情况，将其转为逗号分隔的字符串，避免字典覆盖
         headers = {k: ", ".join(request.headers.getlist(k)) for k in request.headers.keys()}
-        print(f"Headers: {headers}")
-        print(f"Data: {data}")
         logger.info(f"[HEADERS] Received headers: {json.dumps(headers, ensure_ascii=False)}")
         logger.info(f"[INPUT] Received request: {json.dumps(data, ensure_ascii=False)}")
 

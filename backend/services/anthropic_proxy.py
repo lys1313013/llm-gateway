@@ -146,7 +146,7 @@ def forward_anthropic_stream_response(response, request_data, proxy_config, star
                     streamed_events.append(event_data)
                 except json.JSONDecodeError:
                     pass
-            yield decoded_line + '\n'
+            yield decoded_line + '\n\n'
 
     if streamed_events:
         aggregated = _aggregate_anthropic_stream_events(streamed_events)
@@ -158,22 +158,25 @@ def forward_anthropic_stream_response(response, request_data, proxy_config, star
         norm = normalize_usage(usage)
         if not norm:
             norm = normalize_usage(calculate_anthropic_usage(request_data, aggregated))
-        insert_log({
-            'model': request_data.get('model'),
-            'is_stream': True,
-            'status_code': response.status_code,
-            'processing_time_ms': processing_time_ms,
-            'prompt_tokens': norm['prompt_tokens'],
-            'completion_tokens': norm['completion_tokens'],
-            'total_tokens': norm['total_tokens'],
-            'cache_creation_input_tokens': norm.get('cache_creation_input_tokens'),
-            'cache_read_input_tokens': norm.get('cache_read_input_tokens'),
-            'target_url': proxy_config.get('target_url'),
-            'request_data': request_data,
-            'response_data': aggregated,
-            'protocol': proxy_config.get('protocol'),
-            'usage_data': norm['raw'],
-        })
+        try:
+            insert_log({
+                'model': request_data.get('model'),
+                'is_stream': True,
+                'status_code': response.status_code,
+                'processing_time_ms': processing_time_ms,
+                'prompt_tokens': norm['prompt_tokens'],
+                'completion_tokens': norm['completion_tokens'],
+                'total_tokens': norm['total_tokens'],
+                'cache_creation_input_tokens': norm.get('cache_creation_input_tokens'),
+                'cache_read_input_tokens': norm.get('cache_read_input_tokens'),
+                'target_url': proxy_config.get('target_url'),
+                'request_data': request_data,
+                'response_data': aggregated,
+                'protocol': proxy_config.get('protocol'),
+                'usage_data': norm['raw'],
+            })
+        except Exception as e:
+            logger.error(f"[ANTHROPIC-PROXY] Failed to log stream response: {e}")
 
 
 def handle_anthropic_proxy_request(request_data, proxy_config):

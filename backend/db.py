@@ -1,40 +1,108 @@
-import psycopg
-from psycopg.rows import dict_row
+import atexit
 import json
 import logging
 import os
+import re
+
+import psycopg
+from psycopg.rows import dict_row
+from psycopg_pool import ConnectionPool
 
 logger = logging.getLogger(__name__)
 
-# Default database connection parameters
+# ---------------------------------------------------------------------------
+# Database connection parameters
+# ---------------------------------------------------------------------------
 DB_HOST = os.environ.get("DB_HOST", "localhost")
 DB_PORT = os.environ.get("DB_PORT", "5432")
 DB_NAME = os.environ.get("DB_NAME", "mock_openai")
 DB_USER = os.environ.get("DB_USER", "postgres")
 DB_PASSWORD = os.environ.get("DB_PASSWORD", "password")
-DB_TIMEZONE = os.environ.get("DB_TIMEZONE", "Asia/Shanghai")
 
-def get_db_connection():
+_RAW_TZ = os.environ.get("DB_TIMEZONE", "Asia/Shanghai")
+DB_TIMEZONE = _RAW_TZ if re.fullmatch(r"[A-Za-z0-9/_+\-]+", _RAW_TZ) else "UTC"
+
+# ---------------------------------------------------------------------------
+# Connection pool
+# ---------------------------------------------------------------------------
+_pool: ConnectionPool | None = None
+
+
+def _init_pool():
+    """Initialise the global connection pool (idempotent)."""
+    global _pool
+    if _pool is not None:
+        return
+
+    conninfo = (
+        f"host={DB_HOST} port={DB_PORT} dbname={DB_NAME} "
+        f"user={DB_USER} password={DB_PASSWORD}"
+    )
     try:
-        conn = psycopg.connect(
-            host=DB_HOST,
-            port=DB_PORT,
-            dbname=DB_NAME,
-            user=DB_USER,
-            password=DB_PASSWORD
+        _pool = ConnectionPool(
+            conninfo=conninfo,
+            min_size=2,
+            max_size=10,
+            timeout=30,
+            kwargs={"row_factory": dict_row, "autocommit": False},
         )
-        return conn
+        logger.info("Database connection pool initialised (min=2, max=10)")
     except Exception as e:
-        logger.error(f"Database connection failed: {e}")
+        logger.error(f"Failed to initialise connection pool: {e}")
+
+
+def _close_pool():
+    global _pool
+    if _pool:
+        _pool.close()
+        _pool = None
+
+
+atexit.register(_close_pool)
+
+# Eagerly create the pool so the first request is fast.
+_init_pool()
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+def get_db_connection():
+    """Get a connection from the pool (for legacy / one-off callers)."""
+    _init_pool()
+    if _pool is None:
+        return None
+    try:
+        return _pool.getconn()
+    except Exception as e:
+        logger.error(f"Failed to get connection from pool: {e}")
         return None
 
+
+def _release(conn):
+    """Return a connection to the pool, clearing any pending transaction state."""
+    if _pool and conn:
+        try:
+            if conn.info.transaction_status != psycopg.pq.TransactionStatus.IDLE:
+                conn.rollback()
+            _pool.putconn(conn)
+        except Exception:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+
+# ---------------------------------------------------------------------------
+# Schema initialisation
+# ---------------------------------------------------------------------------
 def init_db():
-    """Initialize database and create necessary tables if not exists"""
+    """Create tables if they do not exist."""
     conn = get_db_connection()
     if not conn:
-        logger.error("Failed to initialize database: No connection")
+        logger.error("Failed to initialise database: no connection")
         return
-        
+
     try:
         with conn.cursor() as cur:
             cur.execute("""
@@ -58,7 +126,7 @@ def init_db():
                 cache_creation_input_tokens INTEGER,
                 cache_read_input_tokens INTEGER
             );
-            
+
             CREATE TABLE IF NOT EXISTS provider (
                 id SERIAL PRIMARY KEY,
                 name VARCHAR(100) UNIQUE NOT NULL,
@@ -69,7 +137,7 @@ def init_db():
                 create_time TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                 update_time TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
             );
-            
+
             CREATE TABLE IF NOT EXISTS model_route (
                 id SERIAL PRIMARY KEY,
                 model_pattern VARCHAR(255) NOT NULL,
@@ -96,24 +164,40 @@ def init_db():
                 update_time TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
             );
             """)
+            # Migrate: add columns that may be missing from older schemas
+            for alter_sql in [
+                "ALTER TABLE api_logs ADD COLUMN IF NOT EXISTS usage_data JSONB",
+                "ALTER TABLE api_logs ADD COLUMN IF NOT EXISTS cache_creation_input_tokens INTEGER",
+                "ALTER TABLE api_logs ADD COLUMN IF NOT EXISTS cache_read_input_tokens INTEGER",
+            ]:
+                cur.execute(alter_sql)
         conn.commit()
-        logger.info("Database initialized successfully.")
-
+        logger.info("Database initialised successfully.")
     except Exception as e:
         conn.rollback()
-        logger.error(f"Failed to initialize database table: {e}")
+        logger.error(f"Failed to initialise database: {e}")
     finally:
-        conn.close()
+        _release(conn)
+
+
+# ---------------------------------------------------------------------------
+# Log helpers
+# ---------------------------------------------------------------------------
+def _json_dumps_if_dict(val):
+    if val is not None and not isinstance(val, str):
+        return json.dumps(val)
+    return val
+
 
 def insert_log(log_data: dict):
-    """Insert a new log entry into api_logs table"""
+    """Insert a new log entry into api_logs."""
     conn = get_db_connection()
     if not conn:
         return
-        
+
     try:
         with conn.cursor() as cur:
-            query = """
+            cur.execute("""
             INSERT INTO api_logs (
                 model, is_stream, status_code, processing_time_ms,
                 prompt_tokens, completion_tokens, total_tokens, target_url,
@@ -126,22 +210,7 @@ def insert_log(log_data: dict):
                 %(usage_data)s,
                 %(cache_creation_input_tokens)s, %(cache_read_input_tokens)s
             )
-            """
-
-            # Serialize JSON fields if they are dicts
-            req_data = log_data.get('request_data')
-            if req_data is not None and not isinstance(req_data, str):
-                req_data = json.dumps(req_data)
-
-            res_data = log_data.get('response_data')
-            if res_data is not None and not isinstance(res_data, str):
-                res_data = json.dumps(res_data)
-
-            usage_data = log_data.get('usage_data')
-            if usage_data is not None and not isinstance(usage_data, str):
-                usage_data = json.dumps(usage_data)
-
-            data_to_insert = {
+            """, {
                 'model': log_data.get('model'),
                 'is_stream': log_data.get('is_stream', False),
                 'status_code': log_data.get('status_code'),
@@ -150,33 +219,33 @@ def insert_log(log_data: dict):
                 'completion_tokens': log_data.get('completion_tokens'),
                 'total_tokens': log_data.get('total_tokens'),
                 'target_url': log_data.get('target_url'),
-                'request_data': req_data,
-                'response_data': res_data,
+                'request_data': _json_dumps_if_dict(log_data.get('request_data')),
+                'response_data': _json_dumps_if_dict(log_data.get('response_data')),
                 'error_message': log_data.get('error_message'),
                 'protocol': log_data.get('protocol'),
-                'usage_data': usage_data,
+                'usage_data': _json_dumps_if_dict(log_data.get('usage_data')),
                 'cache_creation_input_tokens': log_data.get('cache_creation_input_tokens'),
                 'cache_read_input_tokens': log_data.get('cache_read_input_tokens'),
-            }
-            
-            cur.execute(query, data_to_insert)
+            })
         conn.commit()
     except Exception as e:
         conn.rollback()
         logger.error(f"Failed to insert log: {e}")
     finally:
-        conn.close()
+        _release(conn)
 
+
+# ---------------------------------------------------------------------------
+# Query: logs
+# ---------------------------------------------------------------------------
 def get_logs(limit=50, offset=0, model=None, protocol=None):
-    """Retrieve logs from api_logs table with optional filters"""
+    """Retrieve logs with optional filters."""
     conn = get_db_connection()
     if not conn:
         return []
 
     try:
-        conditions = []
-        params = []
-
+        conditions, params = [], []
         if model:
             conditions.append("model ILIKE %s")
             params.append(f"%{model}%")
@@ -184,9 +253,7 @@ def get_logs(limit=50, offset=0, model=None, protocol=None):
             conditions.append("protocol = %s")
             params.append(protocol)
 
-        where_clause = ""
-        if conditions:
-            where_clause = "WHERE " + " AND ".join(conditions)
+        where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
 
         with conn.cursor(row_factory=dict_row) as cur:
             cur.execute(f"""
@@ -196,28 +263,29 @@ def get_logs(limit=50, offset=0, model=None, protocol=None):
                        request_data, response_data, error_message, protocol,
                        usage_data, cache_creation_input_tokens, cache_read_input_tokens
                 FROM api_logs
-                {where_clause}
+                {where}
                 ORDER BY created_at DESC
                 LIMIT %s OFFSET %s
             """, (*params, limit, offset))
-            
+
             rows = cur.fetchall()
-            # Convert datetime to string for JSON serialization
             for row in rows:
-                if row.get('created_at'):
-                    row['created_at'] = row['created_at'].isoformat()
-                if row.get('updated_at'):
-                    row['updated_at'] = row['updated_at'].isoformat()
+                for f in ('created_at', 'updated_at'):
+                    if row.get(f):
+                        row[f] = row[f].isoformat()
             return rows
     except Exception as e:
         logger.error(f"Failed to get logs: {e}")
         return []
     finally:
-        conn.close()
+        _release(conn)
 
 
+# ---------------------------------------------------------------------------
+# Query: statistics
+# ---------------------------------------------------------------------------
 def get_today_stats():
-    """Retrieve today's token usage statistics"""
+    """Today's aggregate token usage."""
     conn = get_db_connection()
     if not conn:
         return None
@@ -226,10 +294,10 @@ def get_today_stats():
         with conn.cursor(row_factory=dict_row) as cur:
             cur.execute("""
                 SELECT
-                    COUNT(id) as request_count,
-                    COALESCE(SUM(prompt_tokens), 0) as prompt_tokens,
-                    COALESCE(SUM(completion_tokens), 0) as completion_tokens,
-                    COALESCE(SUM(total_tokens), 0) as total_tokens
+                    COUNT(id)                          AS request_count,
+                    COALESCE(SUM(prompt_tokens), 0)    AS prompt_tokens,
+                    COALESCE(SUM(completion_tokens), 0) AS completion_tokens,
+                    COALESCE(SUM(total_tokens), 0)     AS total_tokens
                 FROM api_logs
                 WHERE DATE(created_at) = CURRENT_DATE
             """)
@@ -238,43 +306,38 @@ def get_today_stats():
         logger.error(f"Failed to get today stats: {e}")
         return None
     finally:
-        conn.close()
+        _release(conn)
 
 
 def get_daily_token_stats(start_date=None, end_date=None):
-    """Retrieve daily token usage statistics"""
+    """Daily token usage over a date range."""
     conn = get_db_connection()
     if not conn:
         return []
-        
+
     try:
         with conn.cursor(row_factory=dict_row) as cur:
             query = """
-                SELECT 
-                    DATE(created_at) as date,
-                    COUNT(id) as request_count,
-                    COALESCE(SUM(prompt_tokens), 0) as prompt_tokens,
-                    COALESCE(SUM(completion_tokens), 0) as completion_tokens,
-                    COALESCE(SUM(total_tokens), 0) as total_tokens
+                SELECT
+                    DATE(created_at) AS date,
+                    COUNT(id) AS request_count,
+                    COALESCE(SUM(prompt_tokens), 0) AS prompt_tokens,
+                    COALESCE(SUM(completion_tokens), 0) AS completion_tokens,
+                    COALESCE(SUM(total_tokens), 0) AS total_tokens
                 FROM api_logs
                 WHERE 1=1
             """
             params = []
-            
             if start_date:
                 query += " AND DATE(created_at) >= %s"
                 params.append(start_date)
-                
             if end_date:
                 query += " AND DATE(created_at) <= %s"
                 params.append(end_date)
-                
             query += " GROUP BY DATE(created_at) ORDER BY date ASC"
-            
+
             cur.execute(query, params)
             rows = cur.fetchall()
-            
-            # Convert date to string for JSON serialization
             for row in rows:
                 if row.get('date'):
                     row['date'] = row['date'].isoformat()
@@ -283,35 +346,32 @@ def get_daily_token_stats(start_date=None, end_date=None):
         logger.error(f"Failed to get daily token stats: {e}")
         return []
     finally:
-        conn.close()
+        _release(conn)
 
 
 def get_hourly_token_stats(date):
-    """Retrieve hourly token usage statistics for a specific date.
-
-    Returns 24 rows (one per hour, 0-23) with zero-filled values
-    for hours that have no requests.
-    """
+    """Hourly token usage for a single date (24 rows, 0-23)."""
     conn = get_db_connection()
     if not conn:
         return []
+
     try:
         with conn.cursor(row_factory=dict_row) as cur:
             cur.execute(f"""
                 SELECT
                     g.hour AS hour,
-                    COALESCE(s.request_count, 0)        AS request_count,
-                    COALESCE(s.prompt_tokens, 0)        AS prompt_tokens,
-                    COALESCE(s.completion_tokens, 0)    AS completion_tokens,
-                    COALESCE(s.total_tokens, 0)         AS total_tokens
+                    COALESCE(s.request_count, 0)     AS request_count,
+                    COALESCE(s.prompt_tokens, 0)     AS prompt_tokens,
+                    COALESCE(s.completion_tokens, 0) AS completion_tokens,
+                    COALESCE(s.total_tokens, 0)      AS total_tokens
                 FROM generate_series(0, 23) AS g(hour)
                 LEFT JOIN (
                     SELECT
                         EXTRACT(HOUR FROM created_at AT TIME ZONE '{DB_TIMEZONE}')::int AS hour,
-                        COUNT(id)                       AS request_count,
-                        SUM(prompt_tokens)              AS prompt_tokens,
-                        SUM(completion_tokens)          AS completion_tokens,
-                        SUM(total_tokens)               AS total_tokens
+                        COUNT(id)              AS request_count,
+                        SUM(prompt_tokens)     AS prompt_tokens,
+                        SUM(completion_tokens) AS completion_tokens,
+                        SUM(total_tokens)      AS total_tokens
                     FROM api_logs
                     WHERE DATE(created_at AT TIME ZONE '{DB_TIMEZONE}') = %s
                     GROUP BY EXTRACT(HOUR FROM created_at AT TIME ZONE '{DB_TIMEZONE}')
@@ -323,133 +383,155 @@ def get_hourly_token_stats(date):
         logger.error(f"Failed to get hourly token stats: {e}")
         return []
     finally:
-        conn.close()
+        _release(conn)
 
 
 def get_model_token_stats(start_date=None, end_date=None):
-    """Retrieve token usage statistics grouped by model"""
+    """Token usage grouped by model."""
     conn = get_db_connection()
     if not conn:
         return []
-        
+
     try:
         with conn.cursor(row_factory=dict_row) as cur:
             query = """
-                SELECT 
-                    COALESCE(model, 'unknown') as model,
-                    COUNT(id) as request_count,
-                    COALESCE(SUM(prompt_tokens), 0) as prompt_tokens,
-                    COALESCE(SUM(completion_tokens), 0) as completion_tokens,
-                    COALESCE(SUM(total_tokens), 0) as total_tokens
+                SELECT
+                    COALESCE(model, 'unknown') AS model,
+                    COUNT(id) AS request_count,
+                    COALESCE(SUM(prompt_tokens), 0) AS prompt_tokens,
+                    COALESCE(SUM(completion_tokens), 0) AS completion_tokens,
+                    COALESCE(SUM(total_tokens), 0) AS total_tokens
                 FROM api_logs
                 WHERE 1=1
             """
             params = []
-            
             if start_date:
                 query += " AND DATE(created_at) >= %s"
                 params.append(start_date)
-                
             if end_date:
                 query += " AND DATE(created_at) <= %s"
                 params.append(end_date)
-                
             query += " GROUP BY COALESCE(model, 'unknown') ORDER BY total_tokens DESC"
-            
+
             cur.execute(query, params)
             return cur.fetchall()
     except Exception as e:
         logger.error(f"Failed to get model token stats: {e}")
         return []
     finally:
-        conn.close()
+        _release(conn)
 
-# --- CRUD for Providers ---
+
+# ---------------------------------------------------------------------------
+# CRUD: provider
+# ---------------------------------------------------------------------------
+_TIME_FIELDS = ('create_time', 'update_time')
+_MODEL_TIME_FIELDS = ('create_time', 'update_time', 'last_openai_test_time', 'last_anthropic_test_time')
+
+
+def _isoformat_fields(row, fields):
+    if not row:
+        return
+    for f in fields:
+        if row.get(f):
+            row[f] = row[f].isoformat()
+
+
 def get_providers():
     conn = get_db_connection()
-    if not conn: return []
+    if not conn:
+        return []
     try:
         with conn.cursor(row_factory=dict_row) as cur:
             cur.execute("SELECT * FROM provider ORDER BY id ASC")
             rows = cur.fetchall()
             for r in rows:
-                if r.get('create_time'): r['create_time'] = r['create_time'].isoformat()
-                if r.get('update_time'): r['update_time'] = r['update_time'].isoformat()
+                _isoformat_fields(r, _TIME_FIELDS)
             return rows
     except Exception as e:
         logger.error(f"Failed to get providers: {e}")
         return []
     finally:
-        conn.close()
+        _release(conn)
+
 
 def get_provider(provider_id):
     conn = get_db_connection()
-    if not conn: return None
+    if not conn:
+        return None
     try:
         with conn.cursor(row_factory=dict_row) as cur:
             cur.execute("SELECT * FROM provider WHERE id = %s", (provider_id,))
             row = cur.fetchone()
-            if row:
-                if row.get('create_time'): row['create_time'] = row['create_time'].isoformat()
-                if row.get('update_time'): row['update_time'] = row['update_time'].isoformat()
+            _isoformat_fields(row, _TIME_FIELDS)
             return row
     except Exception as e:
         logger.error(f"Failed to get provider: {e}")
         return None
     finally:
-        conn.close()
+        _release(conn)
+
 
 def create_provider(data):
     conn = get_db_connection()
-    if not conn: return None
+    if not conn:
+        return None
     try:
         with conn.cursor(row_factory=dict_row) as cur:
             cur.execute("""
                 INSERT INTO provider (name, base_url, api_key, protocol, remark)
                 VALUES (%s, %s, %s, %s, %s) RETURNING *
-            """, (data.get('name'), data.get('base_url'), data.get('api_key'), data.get('protocol', 'openai'), data.get('remark')))
+            """, (
+                data.get('name'), data.get('base_url'), data.get('api_key'),
+                data.get('protocol', 'openai'), data.get('remark'),
+            ))
             row = cur.fetchone()
             conn.commit()
-            if row and row.get('create_time'): row['create_time'] = row['create_time'].isoformat()
-            if row and row.get('update_time'): row['update_time'] = row['update_time'].isoformat()
+            _isoformat_fields(row, _TIME_FIELDS)
             return row
     except Exception as e:
         conn.rollback()
         logger.error(f"Failed to create provider: {e}")
         return None
     finally:
-        conn.close()
+        _release(conn)
+
 
 def update_provider(provider_id, data):
     conn = get_db_connection()
-    if not conn: return None
+    if not conn:
+        return None
     try:
         with conn.cursor(row_factory=dict_row) as cur:
             cur.execute("""
-                UPDATE provider SET 
-                name = COALESCE(%s, name), 
-                base_url = COALESCE(%s, base_url), 
-                api_key = COALESCE(%s, api_key), 
-                protocol = COALESCE(%s, protocol),
-                remark = COALESCE(%s, remark),
-                update_time = CURRENT_TIMESTAMP
+                UPDATE provider SET
+                    name = COALESCE(%s, name),
+                    base_url = COALESCE(%s, base_url),
+                    api_key = COALESCE(%s, api_key),
+                    protocol = COALESCE(%s, protocol),
+                    remark = COALESCE(%s, remark),
+                    update_time = CURRENT_TIMESTAMP
                 WHERE id = %s RETURNING *
-            """, (data.get('name'), data.get('base_url'), data.get('api_key'), data.get('protocol'), data.get('remark'), provider_id))
+            """, (
+                data.get('name'), data.get('base_url'), data.get('api_key'),
+                data.get('protocol'), data.get('remark'), provider_id,
+            ))
             row = cur.fetchone()
             conn.commit()
-            if row and row.get('create_time'): row['create_time'] = row['create_time'].isoformat()
-            if row and row.get('update_time'): row['update_time'] = row['update_time'].isoformat()
+            _isoformat_fields(row, _TIME_FIELDS)
             return row
     except Exception as e:
         conn.rollback()
         logger.error(f"Failed to update provider: {e}")
         return None
     finally:
-        conn.close()
+        _release(conn)
+
 
 def delete_provider(provider_id):
     conn = get_db_connection()
-    if not conn: return False
+    if not conn:
+        return False
     try:
         with conn.cursor() as cur:
             cur.execute("DELETE FROM provider WHERE id = %s", (provider_id,))
@@ -460,102 +542,119 @@ def delete_provider(provider_id):
         logger.error(f"Failed to delete provider: {e}")
         return False
     finally:
-        conn.close()
+        _release(conn)
 
-# --- CRUD for Model Routes ---
+
+# ---------------------------------------------------------------------------
+# CRUD: model_route
+# ---------------------------------------------------------------------------
 def get_routes():
     conn = get_db_connection()
-    if not conn: return []
+    if not conn:
+        return []
     try:
         with conn.cursor(row_factory=dict_row) as cur:
             cur.execute("SELECT * FROM model_route ORDER BY priority DESC, id ASC")
             rows = cur.fetchall()
             for r in rows:
-                if r.get('create_time'): r['create_time'] = r['create_time'].isoformat()
-                if r.get('update_time'): r['update_time'] = r['update_time'].isoformat()
+                _isoformat_fields(r, _TIME_FIELDS)
             return rows
     except Exception as e:
         logger.error(f"Failed to get routes: {e}")
         return []
     finally:
-        conn.close()
+        _release(conn)
+
 
 def get_route(route_id):
     conn = get_db_connection()
-    if not conn: return None
+    if not conn:
+        return None
     try:
         with conn.cursor(row_factory=dict_row) as cur:
             cur.execute("SELECT * FROM model_route WHERE id = %s", (route_id,))
             row = cur.fetchone()
-            if row:
-                if row.get('create_time'): row['create_time'] = row['create_time'].isoformat()
-                if row.get('update_time'): row['update_time'] = row['update_time'].isoformat()
+            _isoformat_fields(row, _TIME_FIELDS)
             return row
     except Exception as e:
         logger.error(f"Failed to get route: {e}")
         return None
     finally:
-        conn.close()
+        _release(conn)
+
 
 def create_route(data):
     conn = get_db_connection()
-    if not conn: return None
+    if not conn:
+        return None
     try:
         with conn.cursor(row_factory=dict_row) as cur:
             cur.execute("""
-                INSERT INTO model_route (model_pattern, route_type, provider_id, target_model, timeout, log_requests, log_responses, priority, is_active)
+                INSERT INTO model_route
+                    (model_pattern, route_type, provider_id, target_model,
+                     timeout, log_requests, log_responses, priority, is_active)
                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING *
-            """, (data.get('model_pattern'), data.get('route_type', 'proxy'), data.get('provider_id'), data.get('target_model'),
-                  data.get('timeout', 60), data.get('log_requests', True), data.get('log_responses', True),
-                  data.get('priority', 0), data.get('is_active', True)))
+            """, (
+                data.get('model_pattern'), data.get('route_type', 'proxy'),
+                data.get('provider_id'), data.get('target_model'),
+                data.get('timeout', 60), data.get('log_requests', True),
+                data.get('log_responses', True), data.get('priority', 0),
+                data.get('is_active', True),
+            ))
             row = cur.fetchone()
             conn.commit()
-            if row and row.get('create_time'): row['create_time'] = row['create_time'].isoformat()
-            if row and row.get('update_time'): row['update_time'] = row['update_time'].isoformat()
+            _isoformat_fields(row, _TIME_FIELDS)
             return row
     except Exception as e:
         conn.rollback()
         logger.error(f"Failed to create route: {e}")
         return None
     finally:
-        conn.close()
+        _release(conn)
+
 
 def update_route(route_id, data):
     conn = get_db_connection()
-    if not conn: return None
+    if not conn:
+        return None
     try:
         with conn.cursor(row_factory=dict_row) as cur:
             cur.execute("""
-                UPDATE model_route SET 
-                model_pattern = COALESCE(%s, model_pattern),
-                route_type = COALESCE(%s, route_type),
-                provider_id = COALESCE(%s, provider_id),
-                target_model = COALESCE(%s, target_model),
-                timeout = COALESCE(%s, timeout),
-                log_requests = COALESCE(%s, log_requests),
-                log_responses = COALESCE(%s, log_responses),
-                priority = COALESCE(%s, priority),
-                is_active = COALESCE(%s, is_active),
-                update_time = CURRENT_TIMESTAMP
+                UPDATE model_route SET
+                    model_pattern = COALESCE(%s, model_pattern),
+                    route_type    = COALESCE(%s, route_type),
+                    provider_id   = COALESCE(%s, provider_id),
+                    target_model  = COALESCE(%s, target_model),
+                    timeout       = COALESCE(%s, timeout),
+                    log_requests  = COALESCE(%s, log_requests),
+                    log_responses = COALESCE(%s, log_responses),
+                    priority      = COALESCE(%s, priority),
+                    is_active     = COALESCE(%s, is_active),
+                    update_time   = CURRENT_TIMESTAMP
                 WHERE id = %s RETURNING *
-            """, (data.get('model_pattern'), data.get('route_type'), data.get('provider_id'), data.get('target_model'),
-                  data.get('timeout'), data.get('log_requests'), data.get('log_responses'),
-                  data.get('priority'), data.get('is_active'), route_id))
+            """, (
+                data.get('model_pattern'), data.get('route_type'),
+                data.get('provider_id'), data.get('target_model'),
+                data.get('timeout'), data.get('log_requests'),
+                data.get('log_responses'), data.get('priority'),
+                data.get('is_active'), route_id,
+            ))
             row = cur.fetchone()
             conn.commit()
-            if row and row.get('create_time'): row['create_time'] = row['create_time'].isoformat()
-            if row and row.get('update_time'): row['update_time'] = row['update_time'].isoformat()
+            _isoformat_fields(row, _TIME_FIELDS)
             return row
     except Exception as e:
         conn.rollback()
         logger.error(f"Failed to update route: {e}")
         return None
     finally:
-        conn.close()
+        _release(conn)
+
 
 def delete_route(route_id):
     conn = get_db_connection()
-    if not conn: return False
+    if not conn:
+        return False
     try:
         with conn.cursor() as cur:
             cur.execute("DELETE FROM model_route WHERE id = %s", (route_id,))
@@ -566,12 +665,14 @@ def delete_route(route_id):
         logger.error(f"Failed to delete route: {e}")
         return False
     finally:
-        conn.close()
+        _release(conn)
+
 
 def get_active_routes():
-    """Get active routes joined with provider info"""
+    """Active routes joined with provider info."""
     conn = get_db_connection()
-    if not conn: return []
+    if not conn:
+        return []
     try:
         with conn.cursor(row_factory=dict_row) as cur:
             cur.execute("""
@@ -586,118 +687,141 @@ def get_active_routes():
         logger.error(f"Failed to get active routes: {e}")
         return []
     finally:
-        conn.close()
+        _release(conn)
 
-# --- CRUD for Exposed Models ---
+
+# ---------------------------------------------------------------------------
+# CRUD: exposed_model
+# ---------------------------------------------------------------------------
 def get_exposed_models():
     conn = get_db_connection()
-    if not conn: return []
+    if not conn:
+        return []
     try:
         with conn.cursor(row_factory=dict_row) as cur:
             cur.execute("SELECT * FROM exposed_model ORDER BY id ASC")
             rows = cur.fetchall()
             for r in rows:
-                for f in ('create_time', 'update_time', 'last_openai_test_time', 'last_anthropic_test_time'):
-                    if r.get(f): r[f] = r[f].isoformat()
+                _isoformat_fields(r, _MODEL_TIME_FIELDS)
             return rows
     except Exception as e:
         logger.error(f"Failed to get exposed models: {e}")
         return []
     finally:
-        conn.close()
+        _release(conn)
+
 
 def get_exposed_model(model_id):
     conn = get_db_connection()
-    if not conn: return None
+    if not conn:
+        return None
     try:
         with conn.cursor(row_factory=dict_row) as cur:
             cur.execute("SELECT * FROM exposed_model WHERE id = %s", (model_id,))
             row = cur.fetchone()
-            if row:
-                for f in ('create_time', 'update_time', 'last_openai_test_time', 'last_anthropic_test_time'):
-                    if row.get(f): row[f] = row[f].isoformat()
+            _isoformat_fields(row, _MODEL_TIME_FIELDS)
             return row
     except Exception as e:
         logger.error(f"Failed to get exposed model: {e}")
         return None
     finally:
-        conn.close()
+        _release(conn)
+
 
 def create_exposed_model(data):
     conn = get_db_connection()
-    if not conn: return None
+    if not conn:
+        return None
     try:
         with conn.cursor(row_factory=dict_row) as cur:
             cur.execute("""
                 INSERT INTO exposed_model (model_id, owned_by, is_active)
                 VALUES (%s, %s, %s) RETURNING *
-            """, (data.get('model_id'), data.get('owned_by', 'organization'), data.get('is_active', True)))
+            """, (
+                data.get('model_id'),
+                data.get('owned_by', 'organization'),
+                data.get('is_active', True),
+            ))
             row = cur.fetchone()
             conn.commit()
-            if row:
-                for f in ('create_time', 'update_time', 'last_openai_test_time', 'last_anthropic_test_time'):
-                    if row.get(f): row[f] = row[f].isoformat()
+            _isoformat_fields(row, _MODEL_TIME_FIELDS)
             return row
     except Exception as e:
         conn.rollback()
         logger.error(f"Failed to create exposed model: {e}")
         return None
     finally:
-        conn.close()
+        _release(conn)
+
 
 def update_exposed_model(model_id, data):
     conn = get_db_connection()
-    if not conn: return None
+    if not conn:
+        return None
     try:
         with conn.cursor(row_factory=dict_row) as cur:
             cur.execute("""
                 UPDATE exposed_model SET
-                model_id = COALESCE(%s, model_id),
-                owned_by = COALESCE(%s, owned_by),
-                is_active = COALESCE(%s, is_active),
-                update_time = CURRENT_TIMESTAMP
+                    model_id  = COALESCE(%s, model_id),
+                    owned_by  = COALESCE(%s, owned_by),
+                    is_active = COALESCE(%s, is_active),
+                    update_time = CURRENT_TIMESTAMP
                 WHERE id = %s RETURNING *
-            """, (data.get('model_id'), data.get('owned_by'), data.get('is_active'), model_id))
+            """, (
+                data.get('model_id'), data.get('owned_by'),
+                data.get('is_active'), model_id,
+            ))
             row = cur.fetchone()
             conn.commit()
-            if row:
-                for f in ('create_time', 'update_time', 'last_openai_test_time', 'last_anthropic_test_time'):
-                    if row.get(f): row[f] = row[f].isoformat()
+            _isoformat_fields(row, _MODEL_TIME_FIELDS)
             return row
     except Exception as e:
         conn.rollback()
         logger.error(f"Failed to update exposed model: {e}")
         return None
     finally:
-        conn.close()
+        _release(conn)
+
 
 def update_exposed_model_test_time(model_id, protocol):
-    """Update the last test success time for a specific protocol"""
+    """Update the last successful test time for a protocol."""
     conn = get_db_connection()
-    if not conn: return None
-    col = 'last_openai_test_time' if protocol == 'openai' else 'last_anthropic_test_time'
+    if not conn:
+        return None
+
+    # Whitelist column name to prevent SQL injection
+    col_map = {
+        'openai': 'last_openai_test_time',
+        'anthropic': 'last_anthropic_test_time',
+    }
+    col = col_map.get(protocol)
+    if not col:
+        logger.error(f"Invalid protocol for test_time update: {protocol}")
+        return None
+
     try:
         with conn.cursor(row_factory=dict_row) as cur:
             cur.execute(f"""
-                UPDATE exposed_model SET {col} = CURRENT_TIMESTAMP, update_time = CURRENT_TIMESTAMP
+                UPDATE exposed_model
+                SET {col} = CURRENT_TIMESTAMP, update_time = CURRENT_TIMESTAMP
                 WHERE id = %s RETURNING *
             """, (model_id,))
             row = cur.fetchone()
             conn.commit()
-            if row:
-                for f in ('create_time', 'update_time', 'last_openai_test_time', 'last_anthropic_test_time'):
-                    if row.get(f): row[f] = row[f].isoformat()
+            _isoformat_fields(row, _MODEL_TIME_FIELDS)
             return row
     except Exception as e:
         conn.rollback()
         logger.error(f"Failed to update exposed model test time: {e}")
         return None
     finally:
-        conn.close()
+        _release(conn)
+
 
 def delete_exposed_model(model_id):
     conn = get_db_connection()
-    if not conn: return False
+    if not conn:
+        return False
     try:
         with conn.cursor() as cur:
             cur.execute("DELETE FROM exposed_model WHERE id = %s", (model_id,))
@@ -708,21 +832,22 @@ def delete_exposed_model(model_id):
         logger.error(f"Failed to delete exposed model: {e}")
         return False
     finally:
-        conn.close()
+        _release(conn)
+
 
 def get_active_exposed_models():
     conn = get_db_connection()
-    if not conn: return []
+    if not conn:
+        return []
     try:
         with conn.cursor(row_factory=dict_row) as cur:
             cur.execute("SELECT * FROM exposed_model WHERE is_active = TRUE ORDER BY id ASC")
             rows = cur.fetchall()
             for r in rows:
-                for f in ('create_time', 'update_time', 'last_openai_test_time', 'last_anthropic_test_time'):
-                    if r.get(f): r[f] = r[f].isoformat()
+                _isoformat_fields(r, _MODEL_TIME_FIELDS)
             return rows
     except Exception as e:
         logger.error(f"Failed to get active exposed models: {e}")
         return []
     finally:
-        conn.close()
+        _release(conn)
