@@ -72,6 +72,8 @@ def calculate_anthropic_usage(request_data, response_data):
                     output_text += block.get('text', '')
                 elif block.get('type') == 'tool_use':
                     output_text += json.dumps(block.get('input', {}), ensure_ascii=False)
+                elif block.get('type') == 'thinking':
+                    output_text += block.get('thinking', '')
 
         output_tokens = estimate_anthropic_tokens(output_text)
 
@@ -146,47 +148,69 @@ def calculate_usage(request_data, response_data):
     """
     try:
         model = request_data.get('model', 'gpt-3.5-turbo')
-        
+
         # 1. 估算 Prompt Tokens
         prompt_text = ""
         for msg in request_data.get('messages', []):
-            prompt_text += msg.get('content', '') or ''
-        
+            # content 可能是 str、list(multi-modal)、None
+            content = msg.get('content')
+            if isinstance(content, str):
+                prompt_text += content
+            elif isinstance(content, list):
+                for block in content:
+                    if isinstance(block, dict) and block.get('type') == 'text':
+                        prompt_text += block.get('text', '')
+            # 历史消息中的 reasoning_content（思考模型的历史推理）
+            reasoning = msg.get('reasoning_content')
+            if isinstance(reasoning, str) and reasoning:
+                prompt_text += reasoning
+
+        # tools 定义也占用 input token
+        tools = request_data.get('tools')
+        if tools:
+            prompt_text += json.dumps(tools, ensure_ascii=False)
+
         prompt_tokens = estimate_tokens(prompt_text, model)
-        
+
         # 2. 估算 Completion Tokens
         completion_text = ""
-        
-        # 处理 _aggregate_stream_chunks 返回的结构
+
+        # 处理 _aggregate_stream_chunks 返回的结构（扁平 dict）
         if 'content' in response_data and isinstance(response_data.get('content'), str):
             completion_text += response_data['content']
-            
+
+        if 'reasoning_content' in response_data and isinstance(response_data.get('reasoning_content'), str):
+            completion_text += response_data['reasoning_content']
+
         if 'tool_calls' in response_data and response_data['tool_calls']:
             completion_text += json.dumps(response_data['tool_calls'], ensure_ascii=False)
-            
+
         if 'function_call' in response_data and response_data['function_call']:
             completion_text += json.dumps(response_data['function_call'], ensure_ascii=False)
-            
+
         # 处理标准同步响应结构 (choices)
         if 'choices' in response_data and isinstance(response_data['choices'], list) and len(response_data['choices']) > 0:
             choice = response_data['choices'][0]
             message = choice.get('message', {})
-            
+
             if 'content' in message and isinstance(message.get('content'), str):
                 completion_text += message['content']
-                
+
+            if 'reasoning_content' in message and isinstance(message.get('reasoning_content'), str):
+                completion_text += message['reasoning_content']
+
             if 'tool_calls' in message and message['tool_calls']:
                 completion_text += json.dumps(message['tool_calls'], ensure_ascii=False)
-                
+
             if 'function_call' in message and message['function_call']:
                 completion_text += json.dumps(message['function_call'], ensure_ascii=False)
-                
+
             # 部分 API 可能直接返回 text
             if not message and 'text' in choice and isinstance(choice.get('text'), str):
                 completion_text += choice['text']
-                
+
         completion_tokens = estimate_tokens(completion_text, model)
-        
+
         return {
             'prompt_tokens': prompt_tokens,
             'completion_tokens': completion_tokens,
