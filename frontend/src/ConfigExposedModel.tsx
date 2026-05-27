@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react'
-import { Button, Card, Dropdown, Form, Input, Modal, Popconfirm, Space, Switch, Table, Tag, Typography, message } from 'antd'
-import { DownOutlined } from '@ant-design/icons'
+import { useEffect, useRef, useState } from 'react'
+import { Button, Card, Dropdown, Form, Input, Modal, Popconfirm, Progress, Space, Switch, Table, Tag, Typography, message } from 'antd'
+import { DownOutlined, LoadingOutlined, ThunderboltOutlined } from '@ant-design/icons'
 import type { TableColumnsType } from 'antd'
 import dayjs from 'dayjs'
 
@@ -15,7 +15,102 @@ export type ExposedModelRecord = {
   update_time: string
 }
 
+type TestResult = {
+  modelId: string
+  modelDbId: number
+  protocol: 'openai' | 'anthropic'
+  endpoint: string
+  status: number
+  latency: number
+  content: string
+  tokens: number
+  error?: string
+  pending?: boolean
+}
+
 const { Text, Paragraph } = Typography
+
+/** Run a single model test and return the result (no side-effects on React state). */
+async function runSingleTest(
+  record: ExposedModelRecord,
+  protocol: 'openai' | 'anthropic',
+): Promise<TestResult> {
+  const modelId = record.model_id
+  const isAnthropic = protocol === 'anthropic'
+  const endpoint = isAnthropic ? '/v1/messages' : '/v1/chat/completions'
+  const body = isAnthropic
+    ? JSON.stringify({ model: modelId, messages: [{ role: 'user', content: 'Hi' }], max_tokens: 20 })
+    : JSON.stringify({ model: modelId, messages: [{ role: 'user', content: 'Hi' }] })
+
+  const start = performance.now()
+  try {
+    const res = await fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': 'test',
+        'anthropic-version': '2023-06-01',
+      },
+      body,
+    })
+    const latency = Math.round(performance.now() - start)
+    const respJson = await res.json()
+
+    let content = ''
+    let tokens = 0
+
+    if (isAnthropic) {
+      content = respJson.content?.[0]?.text || JSON.stringify(respJson.content?.[0]) || ''
+      tokens = respJson.usage?.input_tokens || 0
+    } else {
+      content = respJson.choices?.[0]?.message?.content || ''
+      tokens = respJson.usage?.total_tokens || 0
+    }
+
+    return {
+      modelId,
+      modelDbId: record.id,
+      protocol,
+      endpoint,
+      status: res.status,
+      latency,
+      content,
+      tokens,
+      error: res.ok ? undefined : (respJson.error?.message || JSON.stringify(respJson)),
+    }
+  } catch (e: unknown) {
+    return {
+      modelId,
+      modelDbId: record.id,
+      protocol,
+      endpoint,
+      status: 0,
+      latency: Math.round(performance.now() - start),
+      content: '',
+      tokens: 0,
+      error: e instanceof Error ? e.message : '请求失败',
+    }
+  }
+}
+
+/** Run tasks with a concurrency limit. Each task is a thunk that returns a promise. */
+async function runWithConcurrency<T>(
+  tasks: (() => Promise<T>)[],
+  limit: number,
+  onTaskDone?: (result: T, index: number) => void,
+): Promise<T[]> {
+  const results: T[] = new Array(tasks.length)
+  let idx = 0
+  const run = async () => {
+    while (idx < tasks.length) {
+      const i = idx++
+      results[i] = await tasks[i]()
+      onTaskDone?.(results[i], i)
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, tasks.length) }, () => run()))
+  return results
+}
 
 const ConfigExposedModel = () => {
   const [data, setData] = useState<ExposedModelRecord[]>([])
@@ -24,20 +119,18 @@ const ConfigExposedModel = () => {
   const [editingRecord, setEditingRecord] = useState<ExposedModelRecord | null>(null)
   const [form] = Form.useForm()
 
-  // Test state
+  // Single test state
   const [testModalOpen, setTestModalOpen] = useState(false)
   const [testing, setTesting] = useState(false)
   const [testProtocol, setTestProtocol] = useState<'openai' | 'anthropic'>('openai')
-  const [testResult, setTestResult] = useState<{
-    model: string
-    protocol: string
-    endpoint: string
-    status: number
-    latency: number
-    content: string
-    tokens: number
-    error?: string
-  } | null>(null)
+  const [testResult, setTestResult] = useState<TestResult | null>(null)
+
+  // Batch test state
+  const [batchModalOpen, setBatchModalOpen] = useState(false)
+  const [batchRunning, setBatchRunning] = useState(false)
+  const [batchResults, setBatchResults] = useState<TestResult[]>([])
+  const [batchProgress, setBatchProgress] = useState({ done: 0, total: 0 })
+  const batchRunningRef = useRef(false)
 
   const fetchData = async () => {
     setLoading(true)
@@ -127,58 +220,18 @@ const ConfigExposedModel = () => {
     }
   }
 
+  /** Single model test — uses runSingleTest and shows result in single-test modal. */
   const handleTest = async (record: ExposedModelRecord, protocol: 'openai' | 'anthropic') => {
     setTesting(true)
     setTestResult(null)
     setTestProtocol(protocol)
     setTestModalOpen(true)
 
-    const modelId = record.model_id
-    const isAnthropic = protocol === 'anthropic'
-
-    const endpoint = isAnthropic ? '/v1/messages' : '/v1/chat/completions'
-    const body = isAnthropic
-      ? JSON.stringify({ model: modelId, messages: [{ role: 'user', content: 'Hi' }], max_tokens: 20 })
-      : JSON.stringify({ model: modelId, messages: [{ role: 'user', content: 'Hi' }] })
-
-    const start = performance.now()
     try {
-      const res = await fetch(endpoint, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-api-key': 'test',
-          'anthropic-version': '2023-06-01',
-        },
-        body,
-      })
-      const latency = Math.round(performance.now() - start)
-      const respJson = await res.json()
+      const result = await runSingleTest(record, protocol)
+      setTestResult(result)
 
-      let content = ''
-      let tokens = 0
-
-      if (isAnthropic) {
-        content = respJson.content?.[0]?.text || JSON.stringify(respJson.content?.[0]) || ''
-        tokens = respJson.usage?.input_tokens || 0
-      } else {
-        content = respJson.choices?.[0]?.message?.content || ''
-        tokens = respJson.usage?.total_tokens || 0
-      }
-
-      setTestResult({
-        model: modelId,
-        protocol,
-        endpoint,
-        status: res.status,
-        latency,
-        content,
-        tokens,
-        error: res.ok ? undefined : (respJson.error?.message || JSON.stringify(respJson)),
-      })
-
-      // Update last test success time on backend if request succeeded
-      if (res.ok) {
+      if (!result.error && result.status === 200) {
         try {
           await fetch(`/api/exposed_model/${record.id}/test_time`, {
             method: 'PUT',
@@ -190,20 +243,82 @@ const ConfigExposedModel = () => {
           console.error('[test_time update failed]', e)
         }
       }
-    } catch (e: unknown) {
-      setTestResult({
-        model: modelId,
-        protocol,
-        endpoint,
-        status: 0,
-        latency: Math.round(performance.now() - start),
-        content: '',
-        tokens: 0,
-        error: e instanceof Error ? e.message : '请求失败',
-      })
     } finally {
       setTesting(false)
     }
+  }
+
+  /** Batch test — tests all active models × both protocols concurrently. */
+  const handleTestAll = () => {
+    const activeModels = data.filter((m) => m.is_active)
+    if (activeModels.length === 0) {
+      message.warning('没有已启用的模型可供测试')
+      return
+    }
+
+    const protocols: ('openai' | 'anthropic')[] = ['openai', 'anthropic']
+    const total = activeModels.length * protocols.length
+
+    // Pre-populate all rows with pending state
+    const pendingRows: TestResult[] = activeModels.flatMap((record) =>
+      protocols.map((protocol) => ({
+        modelId: record.model_id,
+        modelDbId: record.id,
+        protocol,
+        endpoint: protocol === 'anthropic' ? '/v1/messages' : '/v1/chat/completions',
+        status: 0,
+        latency: 0,
+        content: '',
+        tokens: 0,
+        pending: true,
+      })),
+    )
+
+    setBatchResults(pendingRows)
+    setBatchProgress({ done: 0, total })
+    setBatchModalOpen(true)
+    setBatchRunning(true)
+    batchRunningRef.current = true
+
+    const tasks = activeModels.flatMap((record) =>
+      protocols.map(
+        (protocol) =>
+          () =>
+            runSingleTest(record, protocol),
+      ),
+    )
+
+    runWithConcurrency(
+      tasks,
+      5,
+      (result, index) => {
+        if (!batchRunningRef.current) return
+        // Update the row at the matching index (tasks and pendingRows share the same order)
+        setBatchResults((prev) => {
+          const next = [...prev]
+          next[index] = result
+          return next
+        })
+        setBatchProgress((prev) => ({ ...prev, done: prev.done + 1 }))
+      },
+    ).then(async (results) => {
+      if (!batchRunningRef.current) return
+
+      // Batch update test_time for successful results
+      const successResults = results.filter((r) => r.status === 200 && !r.error)
+      const updatePromises = successResults.map((r) =>
+        fetch(`/api/exposed_model/${r.modelDbId}/test_time`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ protocol: r.protocol }),
+        }).catch((e) => console.error('[test_time update failed]', e)),
+      )
+      await Promise.all(updatePromises)
+      void fetchData()
+
+      setBatchRunning(false)
+      batchRunningRef.current = false
+    })
   }
 
   const formatTestTime = (t: string | null) => {
@@ -265,10 +380,85 @@ const ConfigExposedModel = () => {
     },
   ]
 
+  // Batch results table columns
+  const batchColumns: TableColumnsType<TestResult> = [
+    {
+      title: '模型',
+      dataIndex: 'modelId',
+      width: 180,
+    },
+    {
+      title: '协议',
+      dataIndex: 'protocol',
+      width: 110,
+      render: (p: string) => (
+        <Tag color={p === 'openai' ? 'green' : 'orange'}>
+          {p === 'openai' ? 'OpenAI' : 'Anthropic'}
+        </Tag>
+      ),
+    },
+    {
+      title: '状态',
+      dataIndex: 'status',
+      width: 100,
+      render: (status: number, record: TestResult) => {
+        if (record.pending) return <Tag icon={<LoadingOutlined spin />} color="processing">测试中</Tag>
+        if (status === 200 && !record.error) return <Tag color="success">200 OK</Tag>
+        if (status === 0) return <Tag color="error">网络错误</Tag>
+        return <Tag color="error">{status}</Tag>
+      },
+    },
+    {
+      title: '延迟',
+      dataIndex: 'latency',
+      width: 90,
+      render: (v: number, record: TestResult) => record.pending ? <Text type="secondary">—</Text> : `${v}ms`,
+      sorter: (a, b) => a.latency - b.latency,
+    },
+    {
+      title: 'Tokens',
+      dataIndex: 'tokens',
+      width: 80,
+      render: (v: number, record: TestResult) => record.pending ? <Text type="secondary">—</Text> : v,
+    },
+    {
+      title: '错误信息',
+      dataIndex: 'error',
+      ellipsis: true,
+      render: (err: string | undefined, record: TestResult) =>
+        record.pending ? <Text type="secondary">—</Text> : err ? <Text type="danger">{err}</Text> : <Text type="secondary">—</Text>,
+    },
+  ]
+
+  // Sort batch results: keep original order while running; after done, failures first
+  const sortedBatchResults = batchRunning
+    ? batchResults
+    : [...batchResults].sort((a, b) => {
+        const aOk = a.status === 200 && !a.error
+        const bOk = b.status === 200 && !b.error
+        if (aOk === bOk) return 0
+        return aOk ? 1 : -1
+      })
+
+  const batchPassed = batchResults.filter((r) => !r.pending && r.status === 200 && !r.error).length
+  const batchFailed = batchResults.filter((r) => !r.pending && (r.status !== 200 || r.error)).length
+
   return (
     <Card
       title="模型列表配置"
-      extra={<Button type="primary" onClick={handleAdd}>新增模型</Button>}
+      extra={
+        <Space>
+          <Button
+            icon={<ThunderboltOutlined />}
+            onClick={handleTestAll}
+            loading={batchRunning}
+            disabled={data.filter((m) => m.is_active).length === 0}
+          >
+            一键测试全部
+          </Button>
+          <Button type="primary" onClick={handleAdd}>新增模型</Button>
+        </Space>
+      }
       variant="borderless"
     >
       <Table
@@ -300,6 +490,7 @@ const ConfigExposedModel = () => {
         </Form>
       </Modal>
 
+      {/* Single test result modal */}
       <Modal
         title={`模型联调测试 — ${testProtocol === 'openai' ? 'OpenAI' : 'Anthropic'} 协议`}
         open={testModalOpen}
@@ -313,7 +504,7 @@ const ConfigExposedModel = () => {
           <Space direction="vertical" size="middle" style={{ width: '100%' }}>
             <div>
               <Text strong>模型：</Text>
-              <Text code>{testResult.model}</Text>
+              <Text code>{testResult.modelId}</Text>
               <Text style={{ marginLeft: 16 }} strong>协议：</Text>
               <Tag color={testResult.protocol === 'openai' ? 'green' : 'orange'}>
                 {testResult.protocol === 'openai' ? 'OpenAI' : 'Anthropic'}
@@ -370,6 +561,46 @@ const ConfigExposedModel = () => {
             )}
           </Space>
         ) : null}
+      </Modal>
+
+      {/* Batch test results modal */}
+      <Modal
+        title="批量模型测试"
+        open={batchModalOpen}
+        onCancel={() => {
+          batchRunningRef.current = false
+          setBatchModalOpen(false)
+          if (!batchRunning) {
+            setBatchResults([])
+          }
+        }}
+        footer={<Button onClick={() => setBatchModalOpen(false)}>关闭</Button>}
+        width={820}
+      >
+        <Space direction="vertical" size="middle" style={{ width: '100%' }}>
+          {batchProgress.total > 0 && (
+            <Progress
+              percent={Math.round((batchProgress.done / batchProgress.total) * 100)}
+              format={() => `${batchProgress.done} / ${batchProgress.total}`}
+              status={batchRunning ? 'active' : 'success'}
+            />
+          )}
+          <Space size="large">
+            <Text>
+              <Tag color="success">{batchPassed} 通过</Tag>
+              <Tag color="error">{batchFailed} 失败</Tag>
+              <Tag color="processing">{batchProgress.total - batchProgress.done} 剩余</Tag>
+            </Text>
+          </Space>
+          <Table
+            columns={batchColumns}
+            dataSource={sortedBatchResults}
+            rowKey={(r) => `${r.modelDbId}-${r.protocol}`}
+            size="small"
+            pagination={false}
+            scroll={{ y: 400 }}
+          />
+        </Space>
       </Modal>
     </Card>
   )
