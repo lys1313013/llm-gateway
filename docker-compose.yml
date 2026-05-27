@@ -1,37 +1,24 @@
 services:
-  postgres:
-    image: postgres:15-alpine
-    container_name: llm_gateway_postgres
-    environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: password
-      POSTGRES_DB: mock_openai
-    ports:
-      - "5432:5432"
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
-    restart: always
-
   backend:
     image: ghcr.io/lys1313013/llm-gateway-backend:latest
     container_name: llm_gateway_backend
     environment:
-      DB_HOST: postgres
-      DB_PORT: "5432"
-      DB_NAME: mock_openai
-      DB_USER: postgres
-      DB_PASSWORD: password
+      FLASK_DEBUG: "false"
+      # 数据库连接配置：
+      # - Docker PG 容器：DB_HOST=llm_gateway_postgres（默认）
+      # - 宿主机自建 PG：DB_HOST=host.docker.internal (macOS/Windows) 或宿主机 IP
+      DB_HOST: ${DB_HOST:-llm_gateway_postgres}
+      DB_PORT: ${DB_PORT:-5432}
+      DB_NAME: ${DB_NAME:-mock_openai}
+      DB_USER: ${DB_USER:-postgres}
+      DB_PASSWORD: ${DB_PASSWORD:-password}
       DB_TIMEZONE: Asia/Shanghai
     ports:
       - "5001:5001"
-    depends_on:
-      postgres:
-        condition: service_healthy
+    networks:
+      llm_gateway_net:
+        aliases:
+          - backend
     restart: always
 
   frontend:
@@ -41,7 +28,11 @@ services:
       - "80:80"
     depends_on:
       - backend
+    networks:
+      - llm_gateway_net
     restart: always
 
-volumes:
-  postgres_data:
+networks:
+  llm_gateway_net:
+    external: true
+    name: llm-gateway-net

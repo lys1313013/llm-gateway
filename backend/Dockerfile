@@ -13,4 +13,4 @@ COPY . .
 
 EXPOSE 5001
 
-CMD ["python", "app.py", "--port", "5001"]
+CMD ["gunicorn", "--bind", "0.0.0.0:5001", "--workers", "2", "--timeout", "120", "app:app"]

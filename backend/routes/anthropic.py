@@ -24,6 +24,15 @@ def match_route_for_anthropic(model):
 def anthropic_messages():
     try:
         data = request.json
+        if not data:
+            return jsonify({
+                'type': 'error',
+                'error': {
+                    'type': 'invalid_request_error',
+                    'message': 'Request body must be JSON',
+                },
+            }), 400
+
         model = data.get('model', '')
 
         headers = {k: ", ".join(request.headers.getlist(k)) for k in request.headers.keys()}
