@@ -10,7 +10,7 @@ from db import (
     create_user, get_user_by_username, get_user_by_id, get_users,
     update_user_password, delete_user,
     create_api_key, get_api_keys_by_user, get_api_key_by_hash,
-    delete_api_key, toggle_api_key,
+    delete_api_key, toggle_api_key, update_api_key_name,
 )
 
 logger = logging.getLogger(__name__)
@@ -191,7 +191,7 @@ def create_key():
         name = data['name'].strip() or 'default'
 
     full_key, key_hash, key_prefix = generate_api_key()
-    key_record = create_api_key(payload['sub'], key_hash, key_prefix, name)
+    key_record = create_api_key(payload['sub'], key_hash, key_prefix, name, key_value=full_key)
     if not key_record:
         return jsonify({'success': False, 'message': '创建 API Key 失败'}), 500
 
@@ -227,4 +227,26 @@ def toggle_key(key_id):
     result = toggle_api_key(key_id, data['is_active'])
     if not result:
         return jsonify({'success': False, 'message': '操作失败'}), 500
+    return jsonify({'success': True, 'data': result})
+
+
+@auth_bp.route('/api_keys/<int:key_id>', methods=['PUT'])
+def update_key(key_id):
+    payload = _get_current_user()
+    if not payload:
+        return jsonify({'success': False, 'message': '未授权'}), 401
+
+    data = request.get_json(silent=True)
+    if not data or not data.get('name'):
+        return jsonify({'success': False, 'message': '名称不能为空'}), 400
+
+    name = data['name'].strip()
+    if not name:
+        return jsonify({'success': False, 'message': '名称不能为空'}), 400
+    if len(name) > 100:
+        return jsonify({'success': False, 'message': '名称长度不能超过 100'}), 400
+
+    result = update_api_key_name(key_id, name)
+    if not result:
+        return jsonify({'success': False, 'message': '更新失败'}), 500
     return jsonify({'success': True, 'data': result})
