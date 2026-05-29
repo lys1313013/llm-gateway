@@ -6,7 +6,7 @@ from flask import Flask, jsonify, request
 from flask_cors import CORS
 
 from db import (
-    init_db, get_logs, get_today_stats,
+    init_db, get_logs, get_log_count, get_today_stats,
     get_daily_token_stats, get_hourly_token_stats, get_model_token_stats,
     get_user_count, create_user, update_api_key_last_used,
     get_api_key_by_hash,
@@ -120,7 +120,8 @@ def api_logs():
     protocol = request.args.get('protocol') or None
 
     logs = get_logs(limit=limit, offset=offset, model=model, protocol=protocol)
-    return jsonify({'success': True, 'data': logs})
+    total = get_log_count(model=model, protocol=protocol)
+    return jsonify({'success': True, 'data': logs, 'total': total})
 
 
 @app.route('/api/logs/today_stats', methods=['GET'])

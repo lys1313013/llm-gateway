@@ -28,12 +28,14 @@ type LogRecord = {
 }
 
 const LogViewer = () => {
+  const [currentPage, setCurrentPage] = useState(1)
   const [logs, setLogs] = useState<LogRecord[]>([])
   const [loading, setLoading] = useState(false)
   const [modalVisible, setModalVisible] = useState(false)
   const [currentLog, setCurrentLog] = useState<LogRecord | null>(null)
   const [filterModel, setFilterModel] = useState('')
   const [filterProtocol, setFilterProtocol] = useState<string | undefined>(undefined)
+  const [total, setTotal] = useState(0)
   const [todayStats, setTodayStats] = useState({ requestCount: 0, promptTokens: 0, completionTokens: 0, totalTokens: 0 })
 
   const fetchTodayStats = async () => {
@@ -53,16 +55,22 @@ const LogViewer = () => {
     }
   }
 
-  const fetchLogs = async (model?: string, protocol?: string) => {
+  const PAGE_SIZE = 20
+
+  const fetchLogs = async (page = 1, model?: string, protocol?: string) => {
     setLoading(true)
     try {
-      const params = new URLSearchParams({ limit: '100' })
+      const params = new URLSearchParams({
+        limit: String(PAGE_SIZE),
+        offset: String((page - 1) * PAGE_SIZE),
+      })
       if (model) params.append('model', model)
       if (protocol) params.append('protocol', protocol)
       const response = await apiFetch(`/api/logs?${params}`)
       const result = await response.json()
       if (result.success) {
         setLogs(result.data as LogRecord[])
+        setTotal(result.total ?? 0)
       }
     } catch (error) {
       console.error('获取日志失败:', error)
@@ -77,19 +85,27 @@ const LogViewer = () => {
     void fetchTodayStats()
   }, [])
 
+  const handlePageChange = (page: number) => {
+    setCurrentPage(page)
+    void fetchLogs(page, filterModel || undefined, filterProtocol)
+  }
+
   const handleRefresh = () => {
-    void fetchLogs(filterModel || undefined, filterProtocol)
+    setCurrentPage(1)
+    void fetchLogs(1, filterModel || undefined, filterProtocol)
     void fetchTodayStats()
   }
 
   const handleSearch = () => {
-    void fetchLogs(filterModel || undefined, filterProtocol)
+    setCurrentPage(1)
+    void fetchLogs(1, filterModel || undefined, filterProtocol)
   }
 
   const handleResetFilters = () => {
+    setCurrentPage(1)
     setFilterModel('')
     setFilterProtocol(undefined)
-    void fetchLogs()
+    void fetchLogs(1)
   }
 
   const handleViewDetails = (record: LogRecord) => {
@@ -100,10 +116,10 @@ const LogViewer = () => {
   const columns: TableColumnsType<LogRecord> = useMemo(
     () => [
       {
-        title: 'ID',
-        dataIndex: 'id',
-        key: 'id',
+        title: '序号',
+        key: 'index',
         width: 60,
+        render: (_: unknown, __: LogRecord, index: number) => (currentPage - 1) * PAGE_SIZE + index + 1,
       },
       {
         title: '请求时间',
@@ -212,7 +228,7 @@ const LogViewer = () => {
         ),
       },
     ],
-    [],
+    [currentPage],
   )
 
   return (
@@ -286,7 +302,14 @@ const LogViewer = () => {
           dataSource={logs}
           rowKey="id"
           loading={loading}
-          pagination={{ pageSize: 20 }}
+          pagination={{
+            pageSize: PAGE_SIZE,
+            current: currentPage,
+            total,
+            showTotal: (t) => `共 ${t} 条`,
+            showSizeChanger: false,
+            onChange: handlePageChange,
+          }}
         />
       </Card>
 

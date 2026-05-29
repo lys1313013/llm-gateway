@@ -54,7 +54,7 @@ const menuItems = [
       { key: 'config/exposed_model', icon: <AppstoreOutlined />, label: '模型列表' },
     ],
   },
-  { key: 'api_keys', icon: <KeyOutlined />, label: 'API Keys' },
+  { key: 'api_keys', icon: <KeyOutlined />, label: 'API Key' },
 ]
 
 const contentMap: Record<PageKey, React.ReactNode> = {

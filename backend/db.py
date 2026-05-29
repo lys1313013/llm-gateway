@@ -178,6 +178,7 @@ def init_db():
                 user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
                 key_hash VARCHAR(255) NOT NULL,
                 key_prefix VARCHAR(16) NOT NULL,
+                key_value VARCHAR(255),
                 name VARCHAR(100) NOT NULL DEFAULT 'default',
                 is_active BOOLEAN DEFAULT TRUE,
                 created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
@@ -190,6 +191,7 @@ def init_db():
                 "ALTER TABLE api_logs ADD COLUMN IF NOT EXISTS usage_data JSONB",
                 "ALTER TABLE api_logs ADD COLUMN IF NOT EXISTS cache_creation_input_tokens INTEGER",
                 "ALTER TABLE api_logs ADD COLUMN IF NOT EXISTS cache_read_input_tokens INTEGER",
+                "ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS key_value VARCHAR(255)",
             ]:
                 cur.execute(alter_sql)
         conn.commit()
@@ -298,6 +300,33 @@ def get_logs(limit=50, offset=0, model=None, protocol=None):
     except Exception as e:
         logger.error(f"Failed to get logs: {e}")
         return []
+    finally:
+        _release(conn)
+
+
+def get_log_count(model=None, protocol=None):
+    """Count logs with optional filters."""
+    conn = get_db_connection()
+    if not conn:
+        return 0
+
+    try:
+        conditions, params = [], []
+        if model:
+            conditions.append("model ILIKE %s")
+            params.append(f"%{model}%")
+        if protocol:
+            conditions.append("protocol = %s")
+            params.append(protocol)
+
+        where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+
+        with conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(f"SELECT COUNT(*) AS cnt FROM api_logs {where}", params)
+            return cur.fetchone()['cnt']
+    except Exception as e:
+        logger.error(f"Failed to count logs: {e}")
+        return 0
     finally:
         _release(conn)
 
@@ -1021,17 +1050,17 @@ def get_user_count():
 _API_KEY_TIME_FIELDS = ('created_at', 'last_used_at')
 
 
-def create_api_key(user_id, key_hash, key_prefix, name='default'):
+def create_api_key(user_id, key_hash, key_prefix, name='default', key_value=None):
     conn = get_db_connection()
     if not conn:
         return None
     try:
         with conn.cursor(row_factory=dict_row) as cur:
             cur.execute("""
-                INSERT INTO api_keys (user_id, key_hash, key_prefix, name)
-                VALUES (%s, %s, %s, %s)
-                RETURNING id, user_id, key_prefix, name, is_active, created_at, last_used_at
-            """, (user_id, key_hash, key_prefix, name))
+                INSERT INTO api_keys (user_id, key_hash, key_prefix, key_value, name)
+                VALUES (%s, %s, %s, %s, %s)
+                RETURNING id, user_id, key_prefix, key_value, name, is_active, created_at, last_used_at
+            """, (user_id, key_hash, key_prefix, key_value, name))
             row = cur.fetchone()
             conn.commit()
             _isoformat_fields(row, _API_KEY_TIME_FIELDS)
@@ -1051,7 +1080,7 @@ def get_api_keys_by_user(user_id):
     try:
         with conn.cursor(row_factory=dict_row) as cur:
             cur.execute("""
-                SELECT id, user_id, key_prefix, name, is_active, created_at, last_used_at
+                SELECT id, user_id, key_prefix, key_value, name, is_active, created_at, last_used_at
                 FROM api_keys WHERE user_id = %s ORDER BY id DESC
             """, (user_id,))
             rows = cur.fetchall()
@@ -1122,6 +1151,29 @@ def delete_api_key(key_id):
         _release(conn)
 
 
+def update_api_key_name(key_id, name):
+    conn = get_db_connection()
+    if not conn:
+        return None
+    try:
+        with conn.cursor(row_factory=dict_row) as cur:
+            cur.execute("""
+                UPDATE api_keys SET name = %s WHERE id = %s
+                RETURNING id, user_id, key_prefix, key_value, name, is_active, created_at, last_used_at
+            """, (name, key_id))
+            row = cur.fetchone()
+            conn.commit()
+            if row:
+                _isoformat_fields(row, _API_KEY_TIME_FIELDS)
+            return row
+    except Exception as e:
+        conn.rollback()
+        logger.error(f"Failed to update api key name: {e}")
+        return None
+    finally:
+        _release(conn)
+
+
 def toggle_api_key(key_id, is_active):
     conn = get_db_connection()
     if not conn:
@@ -1130,7 +1182,7 @@ def toggle_api_key(key_id, is_active):
         with conn.cursor(row_factory=dict_row) as cur:
             cur.execute("""
                 UPDATE api_keys SET is_active = %s WHERE id = %s
-                RETURNING id, user_id, key_prefix, name, is_active, created_at, last_used_at
+                RETURNING id, user_id, key_prefix, key_value, name, is_active, created_at, last_used_at
             """, (is_active, key_id))
             row = cur.fetchone()
             conn.commit()

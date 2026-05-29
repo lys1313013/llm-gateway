@@ -87,14 +87,14 @@ def _aggregate_stream_chunks(chunks):
                 aggregated['reasoning_content'] = ''
             aggregated['reasoning_content'] += delta['reasoning_content']
             
-        if 'function_call' in delta:
+        if delta.get('function_call'):
             has_function_call = True
             if 'name' in delta['function_call'] and delta['function_call']['name']:
                 function_call['name'] += delta['function_call']['name']
             if 'arguments' in delta['function_call'] and delta['function_call']['arguments']:
                 function_call['arguments'] += delta['function_call']['arguments'] or ''
                 
-        if 'tool_calls' in delta:
+        if delta.get('tool_calls'):
             for tc in delta['tool_calls']:
                 idx = tc.get('index', 0)
                 if idx not in tool_calls:
