@@ -231,18 +231,27 @@ const TokenStats = () => {
     data: modelData,
     angleField: 'total_tokens',
     colorField: 'model',
-    radius: 0.45,
+    radius: 0.65,
     innerRadius: 0.35,
-    height: 400,
+    height: 450,
     label: {
-      text: (d: any) => `${d.model}\n${d.total_tokens}`,
+      text: (d: any) => {
+        const total = modelData.reduce((s: number, m: any) => s + m.total_tokens, 0)
+        const pct = (d.total_tokens / total) * 100
+        if (pct < 5) return ''
+        return `${d.model}\n${pct.toFixed(1)}%`
+      },
       position: 'outside',
+      labelSpacing: 8,
+      style: { fontSize: 11 },
+      connector: false,
     },
+    labelTransform: [{ type: 'overlapHide' }],
     legend: {
       color: {
         title: false,
         position: 'bottom',
-        rowPadding: 5,
+        rowPadding: 15,
       },
     },
   }
@@ -283,7 +292,7 @@ const TokenStats = () => {
       </Row>
 
       <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
-        <Col span={16}>
+        <Col span={12}>
           <Card
             title={isSingleDay ? '每小时 Token 消耗趋势' : '每日 Token 消耗趋势'}
             loading={loading}
@@ -308,7 +317,7 @@ const TokenStats = () => {
             )}
           </Card>
         </Col>
-        <Col span={8}>
+        <Col span={12}>
           <Card title="模型消耗占比 (Total Tokens)" loading={loading} style={{ height: '100%', overflow: 'hidden' }}>
             {modelData.length > 0 ? (
               <Pie {...pieConfig} />
