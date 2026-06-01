@@ -135,11 +135,32 @@ const ApiKeys = () => {
   }
 
   const copyText = (text: string) => {
-    navigator.clipboard.writeText(text).then(() => {
+    if (navigator.clipboard && window.isSecureContext) {
+      navigator.clipboard.writeText(text).then(() => {
+        message.success('已复制到剪贴板')
+      }).catch(() => {
+        fallbackCopy(text)
+      })
+    } else {
+      fallbackCopy(text)
+    }
+  }
+
+  const fallbackCopy = (text: string) => {
+    const textarea = document.createElement('textarea')
+    textarea.value = text
+    textarea.style.position = 'fixed'
+    textarea.style.opacity = '0'
+    document.body.appendChild(textarea)
+    textarea.select()
+    try {
+      document.execCommand('copy')
       message.success('已复制到剪贴板')
-    }).catch(() => {
+    } catch {
       message.error('复制失败，请手动复制')
-    })
+    } finally {
+      document.body.removeChild(textarea)
+    }
   }
 
   const columns: TableColumnsType<ApiKeyRecord> = [
