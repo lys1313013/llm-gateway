@@ -1,10 +1,17 @@
+import fnmatch
+import logging
+
 from flask import Blueprint, request, jsonify
 from db import (
     get_providers, get_provider, create_provider, update_provider, delete_provider,
     get_routes, get_route, create_route, update_route, delete_route,
     get_exposed_models, get_exposed_model, create_exposed_model, update_exposed_model, delete_exposed_model,
-    update_exposed_model_test_time,
+    update_exposed_model_test_time, get_active_routes,
 )
+from services.proxy import handle_proxy_request
+from services.anthropic_proxy import handle_anthropic_proxy_request
+
+logger = logging.getLogger(__name__)
 
 admin_bp = Blueprint('admin', __name__, url_prefix='/api')
 
@@ -168,3 +175,102 @@ def update_test_time(id):
     if not result:
         return jsonify({'success': False, 'message': 'Failed to update'}), 500
     return jsonify({'success': True, 'data': result})
+
+
+# ---------------------------------------------------------------------------
+# Test Proxy — admin-only endpoints that proxy requests using JWT auth
+# (no API Key required; used by the frontend model test feature)
+# ---------------------------------------------------------------------------
+def _match_route_for_test(model, protocol):
+    """Match an active route for the given model and protocol."""
+    active_routes = get_active_routes()
+    for route in active_routes:
+        route_protocol = route.get('protocol')
+        if protocol == 'openai' and route_protocol not in ('openai', None):
+            continue
+        if protocol == 'anthropic' and route_protocol != 'anthropic':
+            continue
+        if fnmatch.fnmatch(model, route['model_pattern']):
+            return route
+    return None
+
+
+@admin_bp.route('/test/chat', methods=['POST'])
+def test_chat():
+    """Admin-only test endpoint for OpenAI protocol."""
+    try:
+        data = request.json
+        if not data:
+            return jsonify({'error': {'message': 'Request body must be JSON', 'type': 'invalid_request_error'}}), 400
+
+        model = data.get('model', '')
+        logger.info(f"[TEST-CHAT] Testing model: {model}")
+
+        route = _match_route_for_test(model, 'openai')
+        if not route:
+            return jsonify({'error': {'message': f"No route matched for model '{model}'", 'type': 'invalid_request_error'}}), 404
+
+        base_url = route.get('base_url', '').rstrip('/')
+        if not base_url.endswith('/chat/completions'):
+            target_url = f"{base_url}/chat/completions"
+        else:
+            target_url = base_url
+
+        proxy_config = {
+            'target_url': target_url,
+            'api_key': route.get('api_key'),
+            'timeout': route.get('timeout', 60),
+            'log_requests': route.get('log_requests', True),
+            'log_responses': route.get('log_responses', True),
+            'model': route.get('target_model') or model,
+            'protocol': route.get('protocol', 'openai'),
+        }
+        return handle_proxy_request(data, proxy_config)
+
+    except Exception as e:
+        logger.error(f"[TEST-CHAT] Error: {e}")
+        return jsonify({'error': {'message': str(e), 'type': 'internal_server_error'}}), 500
+
+
+@admin_bp.route('/test/messages', methods=['POST'])
+def test_messages():
+    """Admin-only test endpoint for Anthropic protocol."""
+    try:
+        data = request.json
+        if not data:
+            return jsonify({
+                'type': 'error',
+                'error': {'type': 'invalid_request_error', 'message': 'Request body must be JSON'},
+            }), 400
+
+        model = data.get('model', '')
+        logger.info(f"[TEST-ANTHROPIC] Testing model: {model}")
+
+        route = _match_route_for_test(model, 'anthropic')
+        if not route:
+            return jsonify({
+                'type': 'error',
+                'error': {'type': 'not_found_error', 'message': f"No route matched for model '{model}'"},
+            }), 404
+
+        base_url = route.get('base_url', '').rstrip('/')
+        target_url = f"{base_url}/v1/messages"
+
+        proxy_config = {
+            'target_url': target_url,
+            'api_key': route.get('api_key'),
+            'timeout': route.get('timeout', 60),
+            'log_requests': route.get('log_requests', True),
+            'log_responses': route.get('log_responses', True),
+            'model': route.get('target_model') or model,
+            'anthropic_version': '2023-06-01',
+            'protocol': route.get('protocol', 'anthropic'),
+        }
+        return handle_anthropic_proxy_request(data, proxy_config)
+
+    except Exception as e:
+        logger.error(f"[TEST-ANTHROPIC] Error: {e}")
+        return jsonify({
+            'type': 'error',
+            'error': {'type': 'internal_server_error', 'message': str(e)},
+        }), 500

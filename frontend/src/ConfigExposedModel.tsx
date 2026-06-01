@@ -38,19 +38,18 @@ async function runSingleTest(
 ): Promise<TestResult> {
   const modelId = record.model_id
   const isAnthropic = protocol === 'anthropic'
-  const endpoint = isAnthropic ? '/v1/messages' : '/v1/chat/completions'
+  // Use admin-only test endpoints (JWT auth) instead of /v1/ (API key auth)
+  const endpoint = isAnthropic ? '/api/test/messages' : '/api/test/chat'
   const body = isAnthropic
     ? JSON.stringify({ model: modelId, messages: [{ role: 'user', content: 'Hi' }], max_tokens: 20 })
     : JSON.stringify({ model: modelId, messages: [{ role: 'user', content: 'Hi' }] })
 
   const start = performance.now()
   try {
-    const res = await fetch(endpoint, {
+    const res = await apiFetch(endpoint, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'x-api-key': 'test',
-        'anthropic-version': '2023-06-01',
       },
       body,
     })
@@ -72,7 +71,7 @@ async function runSingleTest(
       modelId,
       modelDbId: record.id,
       protocol,
-      endpoint,
+      endpoint: isAnthropic ? '/v1/messages' : '/v1/chat/completions',
       status: res.status,
       latency,
       content,
@@ -84,7 +83,7 @@ async function runSingleTest(
       modelId,
       modelDbId: record.id,
       protocol,
-      endpoint,
+      endpoint: isAnthropic ? '/v1/messages' : '/v1/chat/completions',
       status: 0,
       latency: Math.round(performance.now() - start),
       content: '',

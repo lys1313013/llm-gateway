@@ -57,7 +57,7 @@ export async function apiFetch(
 
   const response = await fetch(url, { ...options, headers })
 
-  if (response.status === 401) {
+  if (response.status === 401 && !url.startsWith('/api/test/')) {
     removeToken()
     window.location.hash = '#/login'
   }
