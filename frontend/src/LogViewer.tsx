@@ -108,9 +108,19 @@ const LogViewer = () => {
     void fetchLogs(1)
   }
 
-  const handleViewDetails = (record: LogRecord) => {
+  const handleViewDetails = async (record: LogRecord) => {
     setCurrentLog(record)
     setModalVisible(true)
+    try {
+      const res = await apiFetch(`/api/logs/${record.id}`)
+      const result = await res.json()
+      if (result.success) {
+        setCurrentLog(result.data as LogRecord)
+      }
+    } catch (e) {
+      console.error('获取日志详情失败:', e)
+      message.error('获取日志详情失败')
+    }
   }
 
   const columns: TableColumnsType<LogRecord> = useMemo(

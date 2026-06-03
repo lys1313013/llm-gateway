@@ -279,12 +279,13 @@ def get_logs(limit=50, offset=0, model=None, protocol=None):
         where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
 
         with conn.cursor(row_factory=dict_row) as cur:
+            # request_data / response_data 是体积巨大的 JSONB 字段，列表接口不返回，按需通过详情接口取
             cur.execute(f"""
                 SELECT id, created_at, updated_at, model, is_stream,
                        status_code, processing_time_ms, prompt_tokens,
                        completion_tokens, total_tokens, target_url,
-                       request_data, response_data, error_message, protocol,
-                       usage_data, cache_creation_input_tokens, cache_read_input_tokens
+                       error_message, protocol, usage_data,
+                       cache_creation_input_tokens, cache_read_input_tokens
                 FROM api_logs
                 {where}
                 ORDER BY created_at DESC
@@ -300,6 +301,36 @@ def get_logs(limit=50, offset=0, model=None, protocol=None):
     except Exception as e:
         logger.error(f"Failed to get logs: {e}")
         return []
+    finally:
+        _release(conn)
+
+
+def get_log_by_id(log_id):
+    """Retrieve a single log entry with full request/response data."""
+    conn = get_db_connection()
+    if not conn:
+        return None
+
+    try:
+        with conn.cursor(row_factory=dict_row) as cur:
+            cur.execute("""
+                SELECT id, created_at, updated_at, model, is_stream,
+                       status_code, processing_time_ms, prompt_tokens,
+                       completion_tokens, total_tokens, target_url,
+                       request_data, response_data, error_message, protocol,
+                       usage_data, cache_creation_input_tokens, cache_read_input_tokens
+                FROM api_logs
+                WHERE id = %s
+            """, (log_id,))
+            row = cur.fetchone()
+            if row:
+                for f in ('created_at', 'updated_at'):
+                    if row.get(f):
+                        row[f] = row[f].isoformat()
+            return row
+    except Exception as e:
+        logger.error(f"Failed to get log by id: {e}")
+        return None
     finally:
         _release(conn)
 

@@ -9,7 +9,7 @@ from flask import Flask, jsonify, request
 from flask_cors import CORS
 
 from db import (
-    init_db, get_logs, get_log_count, get_today_stats,
+    init_db, get_logs, get_log_by_id, get_log_count, get_today_stats,
     get_daily_token_stats, get_hourly_token_stats, get_model_token_stats,
     get_user_count, create_user, update_api_key_last_used,
     get_api_key_by_hash,
@@ -125,6 +125,15 @@ def api_logs():
     logs = get_logs(limit=limit, offset=offset, model=model, protocol=protocol)
     total = get_log_count(model=model, protocol=protocol)
     return jsonify({'success': True, 'data': logs, 'total': total})
+
+
+@app.route('/api/logs/<int:log_id>', methods=['GET'])
+def api_log_detail(log_id):
+    """单条日志详情，包含完整 request/response 载荷。"""
+    log = get_log_by_id(log_id)
+    if not log:
+        return jsonify({'success': False, 'message': 'Log not found'}), 404
+    return jsonify({'success': True, 'data': log})
 
 
 @app.route('/api/logs/today_stats', methods=['GET'])
