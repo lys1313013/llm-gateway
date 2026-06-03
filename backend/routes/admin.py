@@ -186,11 +186,9 @@ def update_test_time(id):
 def _match_route_for_test(model, protocol):
     """Match an active route for the given model and protocol."""
     active_routes = get_active_routes()
+    url_field = 'openai_base_url' if protocol == 'openai' else 'anthropic_base_url'
     for route in active_routes:
-        route_protocol = route.get('protocol')
-        if protocol == 'openai' and route_protocol not in ('openai', None):
-            continue
-        if protocol == 'anthropic' and route_protocol != 'anthropic':
+        if not route.get(url_field):
             continue
         if fnmatch.fnmatch(model, route['model_pattern']):
             return route
@@ -212,7 +210,7 @@ def test_chat():
         if not route:
             return jsonify({'error': {'message': f"No route matched for model '{model}'", 'type': 'invalid_request_error'}}), 404
 
-        base_url = route.get('base_url', '').rstrip('/')
+        base_url = route.get('openai_base_url', '').rstrip('/')
         if not base_url.endswith('/chat/completions'):
             target_url = f"{base_url}/chat/completions"
         else:
@@ -225,7 +223,7 @@ def test_chat():
             'log_requests': route.get('log_requests', True),
             'log_responses': route.get('log_responses', True),
             'model': route.get('target_model') or model,
-            'protocol': route.get('protocol', 'openai'),
+            'protocol': 'openai',
         }
         return handle_proxy_request(data, proxy_config)
 
@@ -255,7 +253,7 @@ def test_messages():
                 'error': {'type': 'not_found_error', 'message': f"No route matched for model '{model}'"},
             }), 404
 
-        base_url = route.get('base_url', '').rstrip('/')
+        base_url = route.get('anthropic_base_url', '').rstrip('/')
         target_url = f"{base_url}/v1/messages"
 
         proxy_config = {
@@ -266,7 +264,7 @@ def test_messages():
             'log_responses': route.get('log_responses', True),
             'model': route.get('target_model') or model,
             'anthropic_version': '2023-06-01',
-            'protocol': route.get('protocol', 'anthropic'),
+            'protocol': 'anthropic',
         }
         return handle_anthropic_proxy_request(data, proxy_config)
 

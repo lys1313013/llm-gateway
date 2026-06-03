@@ -11,7 +11,7 @@ chat_bp = Blueprint('chat', __name__)
 def match_route(model):
     active_routes = get_active_routes()
     for route in active_routes:
-        if route.get('protocol') not in ('openai', None):
+        if not route.get('openai_base_url'):
             continue
         if fnmatch.fnmatch(model, route['model_pattern']):
             return route
@@ -61,7 +61,7 @@ def chat_completions():
 
         logger.info(f"[PROXY] Using route '{route['model_pattern']}'")
 
-        base_url = route.get('base_url', '').rstrip('/')
+        base_url = route.get('openai_base_url', '').rstrip('/')
         if not base_url.endswith('/chat/completions'):
             target_url = f"{base_url}/chat/completions"
         else:
@@ -74,7 +74,7 @@ def chat_completions():
             'log_requests': route.get('log_requests', True),
             'log_responses': route.get('log_responses', True),
             'model': route.get('target_model') or model,
-            'protocol': route.get('protocol', 'openai'),
+            'protocol': 'openai',
         }
         return handle_proxy_request(data, proxy_config)
             

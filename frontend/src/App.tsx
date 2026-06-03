@@ -3,7 +3,6 @@ import { Layout, Menu, Typography, Button, Dropdown } from 'antd'
 import {
   FileTextOutlined,
   BarChartOutlined,
-  SettingOutlined,
   ApiOutlined,
   NodeIndexOutlined,
   AppstoreOutlined,
@@ -29,10 +28,10 @@ const { Title } = Typography
 const ALL_KEYS = [
   'logs',
   'stats',
-  'config/provider',
-  'config/route',
-  'config/exposed_model',
-  'api_keys',
+  'provider',
+  'route',
+  'model',
+  'api-keys',
 ] as const
 type PageKey = (typeof ALL_KEYS)[number]
 
@@ -46,26 +45,19 @@ function getHashPage(): PageKey | AuthPage | string {
 const menuItems = [
   { key: 'logs', icon: <FileTextOutlined />, label: '请求日志' },
   { key: 'stats', icon: <BarChartOutlined />, label: 'Token 统计' },
-  {
-    key: 'config',
-    icon: <SettingOutlined />,
-    label: '配置管理',
-    children: [
-      { key: 'config/provider', icon: <ApiOutlined />, label: '大模型产商' },
-      { key: 'config/route', icon: <NodeIndexOutlined />, label: '模型路由' },
-      { key: 'config/exposed_model', icon: <AppstoreOutlined />, label: '模型列表' },
-    ],
-  },
-  { key: 'api_keys', icon: <KeyOutlined />, label: 'API Key' },
+  { key: 'provider', icon: <ApiOutlined />, label: '大模型产商' },
+  { key: 'route', icon: <NodeIndexOutlined />, label: '模型路由' },
+  { key: 'model', icon: <AppstoreOutlined />, label: '模型列表' },
+  { key: 'api-keys', icon: <KeyOutlined />, label: 'API Key' },
 ]
 
 const contentMap: Record<PageKey, React.ReactNode> = {
   logs: <LogViewer />,
   stats: <TokenStats />,
-  'config/provider': <ConfigProvider />,
-  'config/route': <ConfigRoute />,
-  'config/exposed_model': <ConfigExposedModel />,
-  api_keys: <ApiKeys />,
+  provider: <ConfigProvider />,
+  route: <ConfigRoute />,
+  model: <ConfigExposedModel />,
+  'api-keys': <ApiKeys />,
 }
 
 const App = () => {
@@ -115,7 +107,7 @@ const App = () => {
   const handleMenuClick = ({ key }: { key: string }) => {
     window.location.hash = `#/${key}`
   }
-  const openKeys = activeKey.startsWith('config') ? ['config'] : []
+  const openKeys: string[] = []
 
   const user = getCurrentUser()
   const [changePasswordOpen, setChangePasswordOpen] = useState(false)

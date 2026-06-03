@@ -130,9 +130,9 @@ def init_db():
             CREATE TABLE IF NOT EXISTS provider (
                 id SERIAL PRIMARY KEY,
                 name VARCHAR(100) UNIQUE NOT NULL,
-                base_url VARCHAR(255),
+                openai_base_url VARCHAR(255),
+                anthropic_base_url VARCHAR(255),
                 api_key VARCHAR(255),
-                protocol VARCHAR(50) DEFAULT 'openai',
                 remark TEXT,
                 create_time TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                 update_time TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
@@ -194,6 +194,56 @@ def init_db():
                 "ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS key_value VARCHAR(255)",
             ]:
                 cur.execute(alter_sql)
+
+            # Migrate provider to multi-protocol schema: split single
+            # base_url/api_key/protocol into per-protocol base_url + shared api_key.
+            for alter_sql in [
+                "ALTER TABLE provider ADD COLUMN IF NOT EXISTS openai_base_url VARCHAR(255)",
+                "ALTER TABLE provider ADD COLUMN IF NOT EXISTS anthropic_base_url VARCHAR(255)",
+                "ALTER TABLE provider ADD COLUMN IF NOT EXISTS api_key VARCHAR(255)",
+            ]:
+                cur.execute(alter_sql)
+
+            cur.execute("""
+                SELECT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name = 'provider' AND column_name = 'base_url'
+                ) AS old_columns_exist
+            """)
+            old_columns_exist = cur.fetchone()[0]
+            if old_columns_exist:
+                cur.execute("""
+                    UPDATE provider
+                    SET openai_base_url = base_url,
+                        api_key         = api_key
+                    WHERE (protocol = 'openai' OR protocol IS NULL)
+                      AND openai_base_url IS NULL
+                """)
+                cur.execute("""
+                    UPDATE provider
+                    SET anthropic_base_url = base_url
+                    WHERE protocol = 'anthropic'
+                      AND anthropic_base_url IS NULL
+                """)
+                cur.execute("ALTER TABLE provider DROP COLUMN base_url")
+                cur.execute("ALTER TABLE provider DROP COLUMN api_key")
+                cur.execute("ALTER TABLE provider DROP COLUMN protocol")
+
+            # Collapse per-protocol api_key columns (from earlier schema) into single api_key
+            cur.execute("""
+                SELECT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name = 'provider' AND column_name = 'openai_api_key'
+                ) AS has_openai_key
+            """)
+            if cur.fetchone()[0]:
+                cur.execute("""
+                    UPDATE provider
+                    SET api_key = COALESCE(openai_api_key, anthropic_api_key)
+                    WHERE api_key IS NULL
+                """)
+                cur.execute("ALTER TABLE provider DROP COLUMN openai_api_key")
+                cur.execute("ALTER TABLE provider DROP COLUMN anthropic_api_key")
         conn.commit()
         logger.info("Database initialised successfully.")
     except Exception as e:
@@ -553,18 +603,35 @@ def get_provider(provider_id):
         _release(conn)
 
 
+def _has_any_protocol(data):
+    """True if data specifies a non-empty base_url for either protocol."""
+    if data.get('openai_base_url'):
+        return True
+    if data.get('anthropic_base_url'):
+        return True
+    return False
+
+
 def create_provider(data):
+    if not _has_any_protocol(data):
+        logger.error("Failed to create provider: at least one protocol's base_url is required")
+        return None
+    if not data.get('api_key'):
+        logger.error("Failed to create provider: api_key is required")
+        return None
     conn = get_db_connection()
     if not conn:
         return None
     try:
         with conn.cursor(row_factory=dict_row) as cur:
             cur.execute("""
-                INSERT INTO provider (name, base_url, api_key, protocol, remark)
+                INSERT INTO provider
+                    (name, openai_base_url, anthropic_base_url, api_key, remark)
                 VALUES (%s, %s, %s, %s, %s) RETURNING *
             """, (
-                data.get('name'), data.get('base_url'), data.get('api_key'),
-                data.get('protocol', 'openai'), data.get('remark'),
+                data.get('name'),
+                data.get('openai_base_url'), data.get('anthropic_base_url'),
+                data.get('api_key'), data.get('remark'),
             ))
             row = cur.fetchone()
             conn.commit()
@@ -584,18 +651,39 @@ def update_provider(provider_id, data):
         return None
     try:
         with conn.cursor(row_factory=dict_row) as cur:
+            # Fetch current values to merge partial updates before validating
+            cur.execute("""
+                SELECT openai_base_url, anthropic_base_url, api_key
+                FROM provider WHERE id = %s
+            """, (provider_id,))
+            current = cur.fetchone()
+            if not current:
+                return None
+            merged = {
+                'openai_base_url':    data.get('openai_base_url',    current['openai_base_url']),
+                'anthropic_base_url': data.get('anthropic_base_url', current['anthropic_base_url']),
+                'api_key':            data.get('api_key',            current['api_key']),
+            }
+            if not _has_any_protocol(merged):
+                logger.error("Failed to update provider: would leave both protocols empty")
+                return None
+            if not merged['api_key']:
+                logger.error("Failed to update provider: would leave api_key empty")
+                return None
+
             cur.execute("""
                 UPDATE provider SET
                     name = COALESCE(%s, name),
-                    base_url = COALESCE(%s, base_url),
-                    api_key = COALESCE(%s, api_key),
-                    protocol = COALESCE(%s, protocol),
+                    openai_base_url    = %s,
+                    anthropic_base_url = %s,
+                    api_key            = %s,
                     remark = COALESCE(%s, remark),
                     update_time = CURRENT_TIMESTAMP
                 WHERE id = %s RETURNING *
             """, (
-                data.get('name'), data.get('base_url'), data.get('api_key'),
-                data.get('protocol'), data.get('remark'), provider_id,
+                data.get('name'),
+                data.get('openai_base_url'), data.get('anthropic_base_url'),
+                data.get('api_key'), data.get('remark'), provider_id,
             ))
             row = cur.fetchone()
             conn.commit()
@@ -757,7 +845,7 @@ def get_active_routes():
     try:
         with conn.cursor(row_factory=dict_row) as cur:
             cur.execute("""
-                SELECT r.*, p.base_url, p.api_key, p.protocol
+                SELECT r.*, p.openai_base_url, p.anthropic_base_url, p.api_key
                 FROM model_route r
                 LEFT JOIN provider p ON r.provider_id = p.id
                 WHERE r.is_active = TRUE

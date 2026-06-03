@@ -13,7 +13,7 @@ def match_route_for_anthropic(model):
     """Match a route for Anthropic protocol."""
     active_routes = get_active_routes()
     for route in active_routes:
-        if route.get('protocol') != 'anthropic':
+        if not route.get('anthropic_base_url'):
             continue
         if fnmatch.fnmatch(model, route['model_pattern']):
             return route
@@ -53,7 +53,7 @@ def anthropic_messages():
 
         logger.info(f"[ANTHROPIC] Using route '{route['model_pattern']}'")
 
-        base_url = route.get('base_url', '').rstrip('/')
+        base_url = route.get('anthropic_base_url', '').rstrip('/')
         target_url = f"{base_url}/v1/messages"
 
         anthropic_version = request.headers.get('anthropic-version', '2023-06-01')
@@ -66,7 +66,7 @@ def anthropic_messages():
             'log_responses': route.get('log_responses', True),
             'model': route.get('target_model') or model,
             'anthropic_version': anthropic_version,
-            'protocol': route.get('protocol', 'anthropic'),
+            'protocol': 'anthropic',
         }
         return handle_anthropic_proxy_request(data, proxy_config)
 

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Button, Card, Col, Form, Input, InputNumber, Modal, Popconfirm, Row, Select, Space, Switch, Table, message } from 'antd'
+import { Button, Card, Col, Form, Input, InputNumber, Modal, Popconfirm, Row, Select, Space, Switch, Table, Tag, message } from 'antd'
 import type { TableColumnsType } from 'antd'
 import dayjs from 'dayjs'
 import type { ProviderRecord } from './ConfigProvider'
@@ -132,7 +132,28 @@ const ConfigRoute = () => {
     {
       title: '目标产商',
       dataIndex: 'provider_id',
+      width: 140,
       render: (pid) => providers.find(p => p.id === pid)?.name || '-'
+    },
+    {
+      title: '支持协议',
+      dataIndex: 'provider_id',
+      width: 200,
+      render: (pid) => {
+        const p = providers.find(x => x.id === pid)
+        if (!p) return '-'
+        const tags: { color: string; label: string }[] = []
+        if (p.openai_base_url) tags.push({ color: 'green', label: 'OpenAI' })
+        if (p.anthropic_base_url) tags.push({ color: 'orange', label: 'Anthropic' })
+        if (tags.length === 0) return <Tag color="default">未配置</Tag>
+        return (
+          <Space size={4}>
+            {tags.map((t) => (
+              <Tag key={t.label} color={t.color}>{t.label}</Tag>
+            ))}
+          </Space>
+        )
+      },
     },
     { title: '目标模型', dataIndex: 'target_model', render: (val) => val || '-' },
     { title: '优先级', dataIndex: 'priority', width: 80 },
