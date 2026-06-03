@@ -3,11 +3,11 @@ services:
     image: postgres:15-alpine
     container_name: llm_gateway_postgres
     environment:
-      POSTGRES_USER: postgres
+      POSTGRES_USER: ${DB_USER:-postgres}
       POSTGRES_PASSWORD: ${DB_PASSWORD:-password}
       POSTGRES_DB: ${DB_NAME:-llm_gateway}
     ports:
-      - "5432:5432"
+      - "${DB_PORT:-35432}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -16,14 +16,6 @@ services:
       timeout: 5s
       retries: 5
     restart: always
-    networks:
-      llm_gateway_net:
-        aliases:
-          - postgres
 
 volumes:
   postgres_data:
-
-networks:
-  llm_gateway_net:
-    name: llm-gateway-net

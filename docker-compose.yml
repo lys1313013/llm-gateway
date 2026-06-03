@@ -4,36 +4,26 @@ services:
     container_name: llm_gateway_backend
     environment:
       FLASK_DEBUG: "false"
-      # 数据库连接配置：
-      # - Docker PG 容器：DB_HOST=llm_gateway_postgres（默认）
-      # - 宿主机自建 PG：DB_HOST=host.docker.internal (macOS/Windows) 或宿主机 IP
-      DB_HOST: ${DB_HOST:-llm_gateway_postgres}
+      # DB 独立运行在 docker-compose.db.yml 中，通过宿主机端口对外暴露。
+      # 容器内访问宿主机：
+      #   - macOS/Windows: host.docker.internal（默认）
+      #   - Linux: 需在 extra_hosts 中加 host.docker.internal:host-gateway，或改为宿主机 IP
+      DB_HOST: ${DB_HOST:-host.docker.internal}
       DB_PORT: ${DB_PORT:-5432}
       DB_NAME: ${DB_NAME:-llm_gateway}
       DB_USER: ${DB_USER:-postgres}
       DB_PASSWORD: ${DB_PASSWORD:-password}
-      DB_TIMEZONE: Asia/Shanghai
+      DB_TIMEZONE: ${DB_TIMEZONE:-Asia/Shanghai}
       JWT_SECRET_KEY: ${JWT_SECRET_KEY:-change-me-to-a-random-secret-string}
     ports:
-      - "5001:5001"
-    networks:
-      llm_gateway_net:
-        aliases:
-          - backend
+      - "${BACKEND_HOST_PORT:-33351}:5001"
     restart: always
 
   frontend:
     image: ghcr.io/lys1313013/llm-gateway-frontend:latest
     container_name: llm_gateway_frontend
     ports:
-      - "80:80"
+      - "${FRONTEND_HOST_PORT:-33380}:80"
     depends_on:
       - backend
-    networks:
-      - llm_gateway_net
     restart: always
-
-networks:
-  llm_gateway_net:
-    external: true
-    name: llm-gateway-net
