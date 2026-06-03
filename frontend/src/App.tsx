@@ -10,6 +10,7 @@ import {
   KeyOutlined,
   UserOutlined,
   LogoutOutlined,
+  LockOutlined,
 } from '@ant-design/icons'
 import TokenStats from './TokenStats'
 import ConfigProvider from './ConfigProvider'
@@ -19,6 +20,7 @@ import LogViewer from './LogViewer'
 import ApiKeys from './ApiKeys'
 import Login from './Login'
 import Register from './Register'
+import ChangePassword from './ChangePassword'
 import { isAuthenticated, removeToken, getCurrentUser } from './api'
 
 const { Content } = Layout
@@ -116,8 +118,16 @@ const App = () => {
   const openKeys = activeKey.startsWith('config') ? ['config'] : []
 
   const user = getCurrentUser()
+  const [changePasswordOpen, setChangePasswordOpen] = useState(false)
 
   const userMenuItems = [
+    {
+      key: 'change_password',
+      icon: <LockOutlined />,
+      label: '修改密码',
+      onClick: () => setChangePasswordOpen(true),
+    },
+    { type: 'divider' as const },
     {
       key: 'logout',
       icon: <LogoutOutlined />,
@@ -179,6 +189,10 @@ const App = () => {
           {contentMap[activeKey]}
         </Content>
       </Layout>
+      <ChangePassword
+        open={changePasswordOpen}
+        onClose={() => setChangePasswordOpen(false)}
+      />
     </Layout>
   )
 }

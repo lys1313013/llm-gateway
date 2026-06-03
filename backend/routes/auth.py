@@ -130,14 +130,8 @@ def change_password():
         return jsonify({'success': False, 'message': '新密码长度至少 6 位'}), 400
 
     user = get_user_by_username(payload['username'])
-    if not user:
-        return jsonify({'success': False, 'message': '用户不存在'}), 404
-
-    # Need full user record with password_hash for verification
-    from db import get_user_by_username as _get_full
-    full_user = _get_full(payload['username'])
-    if not full_user or not verify_password(old_password, full_user['password_hash']):
-        return jsonify({'success': False, 'message': '旧密码错误'}), 400
+    if not user or not verify_password(old_password, user['password_hash']):
+        return jsonify({'success': False, 'message': '用户不存在或旧密码错误'}), 400
 
     new_hash = hash_password(new_password)
     if not update_user_password(payload['sub'], new_hash):
