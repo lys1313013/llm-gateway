@@ -5,7 +5,7 @@ from flask import Blueprint, request, jsonify
 from db import (
     get_providers, get_provider, create_provider, update_provider, delete_provider,
     get_routes, get_route, create_route, update_route, delete_route,
-    get_exposed_models, get_exposed_model, create_exposed_model, update_exposed_model, delete_exposed_model,
+    get_exposed_models, get_exposed_model, get_exposed_model_by_name, create_exposed_model, update_exposed_model, delete_exposed_model,
     update_exposed_model_test_time, get_active_routes,
 )
 from services.proxy import handle_proxy_request
@@ -139,6 +139,8 @@ def add_exposed_model():
     data = _get_json()
     if data is None:
         return _bad_json()
+    if get_exposed_model_by_name(data.get('model_id')):
+        return jsonify({'success': False, 'message': f"model_id '{data.get('model_id')}' 已存在，不能重复添加"}), 409
     result = create_exposed_model(data)
     if not result:
         return jsonify({'success': False, 'message': 'Failed to create'}), 500

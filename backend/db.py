@@ -809,6 +809,23 @@ def get_exposed_model(model_id):
         _release(conn)
 
 
+def get_exposed_model_by_name(model_id):
+    conn = get_db_connection()
+    if not conn:
+        return None
+    try:
+        with conn.cursor(row_factory=dict_row) as cur:
+            cur.execute("SELECT * FROM exposed_model WHERE model_id = %s", (model_id,))
+            row = cur.fetchone()
+            _isoformat_fields(row, _MODEL_TIME_FIELDS)
+            return row
+    except Exception as e:
+        logger.error(f"Failed to get exposed model by name: {e}")
+        return None
+    finally:
+        _release(conn)
+
+
 def create_exposed_model(data):
     conn = get_db_connection()
     if not conn:
