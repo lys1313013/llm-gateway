@@ -1,0 +1,13 @@
+# Build artifacts
+bin/
+dist/
+*.exe
+*.test
+*.out
+
+# Local config
+.env
+.env.local
+
+# OS
+.DS_Store
