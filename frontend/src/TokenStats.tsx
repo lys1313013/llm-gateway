@@ -227,6 +227,11 @@ const TokenStats = () => {
     },
   ]
 
+  // Hourly table: drop empty hours and sort newest first
+  const hourlyTableData = hourlyData
+    .filter(h => h.request_count > 0)
+    .sort((a, b) => b.hour - a.hour)
+
   const pieConfig = {
     data: modelData,
     angleField: 'total_tokens',
@@ -334,9 +339,10 @@ const TokenStats = () => {
         {isSingleDay ? (
           <Table
             columns={hourlyColumns}
-            dataSource={hourlyData}
+            dataSource={hourlyTableData}
             rowKey="hour"
             pagination={false}
+            locale={{ emptyText: '暂无数据' }}
           />
         ) : (
           <Table
