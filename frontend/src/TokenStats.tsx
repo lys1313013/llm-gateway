@@ -252,6 +252,12 @@ const TokenStats = () => {
       connector: false,
     },
     labelTransform: [{ type: 'overlapHide' }],
+    tooltip: {
+      title: (d: any) => d.model,
+      items: [
+        { field: 'total_tokens', name: 'Total Tokens', valueFormatter: (v: number) => v.toLocaleString() },
+      ],
+    },
     legend: {
       color: {
         title: false,
@@ -323,7 +329,7 @@ const TokenStats = () => {
           </Card>
         </Col>
         <Col span={12}>
-          <Card title="模型消耗占比 (Total Tokens)" loading={loading} style={{ height: '100%', overflow: 'hidden' }}>
+          <Card title="模型消耗占比" loading={loading} style={{ height: '100%', overflow: 'hidden' }}>
             {modelData.length > 0 ? (
               <Pie {...pieConfig} />
             ) : (
