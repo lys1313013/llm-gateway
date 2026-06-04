@@ -24,6 +24,8 @@ type LogRecord = {
   target_url?: string | null
   request_data?: unknown
   response_data?: unknown
+  request_headers?: unknown
+  response_headers?: unknown
   error_message?: string | null
 }
 
@@ -33,6 +35,7 @@ const LogViewer = () => {
   const [loading, setLoading] = useState(false)
   const [modalVisible, setModalVisible] = useState(false)
   const [currentLog, setCurrentLog] = useState<LogRecord | null>(null)
+  const [headersModalVisible, setHeadersModalVisible] = useState(false)
   const [filterModel, setFilterModel] = useState('')
   const [filterProtocol, setFilterProtocol] = useState<string | undefined>(undefined)
   const [total, setTotal] = useState(0)
@@ -324,7 +327,14 @@ const LogViewer = () => {
       </Card>
 
       <Modal
-        title={`日志详情 - ID: ${currentLog?.id ?? ''}`}
+        title={
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', paddingRight: 32 }}>
+            <span>{`日志详情 - ID: ${currentLog?.id ?? ''}`}</span>
+            <Button size="small" onClick={() => setHeadersModalVisible(true)}>
+              查看请求头
+            </Button>
+          </div>
+        }
         open={modalVisible}
         onCancel={() => setModalVisible(false)}
         footer={null}
@@ -397,6 +407,34 @@ const LogViewer = () => {
             </div>
           </div>
         )}
+      </Modal>
+
+      <Modal
+        title={`请求头 - 日志 ID: ${currentLog?.id ?? ''}`}
+        open={headersModalVisible}
+        onCancel={() => setHeadersModalVisible(false)}
+        footer={null}
+        width="min(72vw, 1100px)"
+        style={{ top: 48 }}
+        styles={{
+          body: {
+            maxHeight: 'calc(86vh - 88px)',
+            overflowY: 'auto',
+            paddingTop: 12,
+          },
+        }}
+      >
+        <div
+          style={{
+            display: 'flex',
+            gap: 16,
+            alignItems: 'stretch',
+            flexWrap: 'wrap',
+          }}
+        >
+          <JsonViewer title="Request Headers" value={currentLog?.request_headers} height="60vh" />
+          <JsonViewer title="Response Headers" value={currentLog?.response_headers} height="60vh" />
+        </div>
       </Modal>
     </div>
   )
