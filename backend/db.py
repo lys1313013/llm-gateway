@@ -144,7 +144,7 @@ def init_db():
                 route_type VARCHAR(20) NOT NULL,
                 provider_id INTEGER REFERENCES provider(id) ON DELETE SET NULL,
                 target_model VARCHAR(100),
-                timeout INTEGER DEFAULT 60,
+                timeout INTEGER DEFAULT -1,
                 log_requests BOOLEAN DEFAULT TRUE,
                 log_responses BOOLEAN DEFAULT TRUE,
                 priority INTEGER DEFAULT 0,
@@ -152,6 +152,8 @@ def init_db():
                 create_time TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                 update_time TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
             );
+            # Migrate: 旧 schema 中 timeout DEFAULT 为 60，改成 -1（不超时）
+            cur.execute("ALTER TABLE model_route ALTER COLUMN timeout SET DEFAULT -1")
 
             CREATE TABLE IF NOT EXISTS exposed_model (
                 id SERIAL PRIMARY KEY,
@@ -766,7 +768,7 @@ def create_route(data):
             """, (
                 data.get('model_pattern'), data.get('route_type', 'proxy'),
                 data.get('provider_id'), data.get('target_model'),
-                data.get('timeout', 60), data.get('log_requests', True),
+                data.get('timeout', -1), data.get('log_requests', True),
                 data.get('log_responses', True), data.get('priority', 0),
                 data.get('is_active', True),
             ))

@@ -66,7 +66,7 @@ const ConfigRoute = () => {
 
     form.setFieldsValue({
       provider_id: defaultProviderId,
-      timeout: 60,
+      timeout: 600,
       log_requests: true,
       log_responses: true,
       priority: 0,
@@ -232,8 +232,8 @@ const ConfigRoute = () => {
 
           <Row gutter={16}>
             <Col span={12}>
-              <Form.Item name="timeout" label="超时时间 (秒)">
-                <InputNumber min={1} style={{ width: '100%' }} />
+              <Form.Item name="timeout" label="超时时间 (秒)" tooltip="-1 表示不超时（永久等待），其他为秒数">
+                <InputNumber min={-1} style={{ width: '100%' }} />
               </Form.Item>
             </Col>
             <Col span={12}>

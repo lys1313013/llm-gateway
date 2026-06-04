@@ -13,7 +13,10 @@ def forward_anthropic_request(request_data, proxy_config):
     """Forward request to an Anthropic-compatible upstream API."""
     target_url = proxy_config.get('target_url')
     api_key = proxy_config.get('api_key')
-    timeout = proxy_config.get('timeout', 60)
+    # -1 = 不超时（透传 None 给 requests，即永久等待）
+    timeout = proxy_config.get('timeout', -1)
+    if timeout == -1:
+        timeout = None
     log_requests = proxy_config.get('log_requests', True)
     anthropic_version = proxy_config.get('anthropic_version', '2023-06-01')
     model = proxy_config.get('model')

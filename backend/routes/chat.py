@@ -70,7 +70,7 @@ def chat_completions():
         proxy_config = {
             'target_url': target_url,
             'api_key': route.get('api_key'),
-            'timeout': route.get('timeout', 60),
+            'timeout': route.get('timeout', -1),
             'log_requests': route.get('log_requests', True),
             'log_responses': route.get('log_responses', True),
             'model': route.get('target_model') or model,

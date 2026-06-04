@@ -12,7 +12,10 @@ def forward_request(request_data, proxy_config):
     """转发请求到第三方 API"""
     target_url = proxy_config.get('target_url')
     api_key = proxy_config.get('api_key')
-    timeout = proxy_config.get('timeout', 60)
+    # -1 = 不超时（透传 None 给 requests，即永久等待）
+    timeout = proxy_config.get('timeout', -1)
+    if timeout == -1:
+        timeout = None
     log_requests = proxy_config.get('log_requests', True)
     model = proxy_config.get('model', None)
     if model:

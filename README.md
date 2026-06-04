@@ -135,7 +135,7 @@ pnpm dev
 | `model_pattern` | 通配符匹配（如 `gpt-4*`、`claude-*`、`*`） |
 | `provider_id` | 目标厂商 ID |
 | `target_model` | 目标模型名（可选，不填则保留原始模型名） |
-| `timeout` | 请求超时（秒），默认 60 |
+| `timeout` | 请求超时（秒），`-1` 表示不超时（永久等待），其他正整数为超时秒数，默认 `-1` |
 | `priority` | 优先级，数值越大越先匹配 |
 | `log_requests` / `log_responses` | 日志开关 |
 | `is_active` | 是否启用 |
