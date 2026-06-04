@@ -17,6 +17,8 @@ CREATE TABLE IF NOT EXISTS api_logs (
     target_url VARCHAR(255),
     request_data JSONB,
     response_data JSONB,
+    request_headers JSONB,
+    response_headers JSONB,
     error_message TEXT,
     protocol VARCHAR(50),
     usage_data JSONB,

@@ -87,6 +87,8 @@ type APILog struct {
 	TargetURL              *string         `json:"target_url,omitempty"`
 	RequestData            json.RawMessage `json:"request_data,omitempty"`
 	ResponseData           json.RawMessage `json:"response_data,omitempty"`
+	RequestHeaders         json.RawMessage `json:"request_headers,omitempty"`
+	ResponseHeaders        json.RawMessage `json:"response_headers,omitempty"`
 	ErrorMessage           *string         `json:"error_message,omitempty"`
 	Protocol               *string         `json:"protocol,omitempty"`
 	UsageData              json.RawMessage `json:"usage_data,omitempty"`
@@ -107,6 +109,9 @@ type ProxyConfig struct {
 	Model            string
 	Protocol         string // "openai" | "anthropic"
 	AnthropicVersion string
+	// RequestHeaders is the sanitized incoming request header map (auth
+	// headers removed). Stored in api_logs.request_headers.
+	RequestHeaders map[string]string
 	// IfEmpty is used by some callers as a fallback for AnthropicVersion.
 	// Kept for parity with the Python ProxyConfig; the handler fills it in.
 	IfEmpty string `json:"-"`

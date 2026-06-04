@@ -15,6 +15,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/lys1313013/llm-gateway/backend-go/internal/db"
+	hdrpkg "github.com/lys1313013/llm-gateway/backend-go/internal/headers"
 	"github.com/lys1313013/llm-gateway/backend-go/internal/models"
 	"github.com/lys1313013/llm-gateway/backend-go/internal/proxy"
 )
@@ -80,13 +81,14 @@ func ChatCompletions(c *gin.Context) {
 	target := buildOpenAITargetURL(route.OpenAIBaseURL)
 
 	cfg := models.ProxyConfig{
-		TargetURL:    target,
-		APIKey:       strDeref(route.APIKey),
-		Timeout:      route.Timeout,
-		LogRequests:  route.LogRequests,
-		LogResponses: route.LogResponses,
-		Model:        strDeref(route.TargetModel, model),
-		Protocol:     "openai",
+		TargetURL:      target,
+		APIKey:         strDeref(route.APIKey),
+		Timeout:        route.Timeout,
+		LogRequests:    route.LogRequests,
+		LogResponses:   route.LogResponses,
+		Model:          strDeref(route.TargetModel, model),
+		Protocol:       "openai",
+		RequestHeaders: hdrpkg.FromMap(collectHeaders(c.Request.Header)),
 	}
 
 	status, headers, bodyRC, isStream, err := proxy.HandleOpenAI(c.Request.Context(), body, cfg)
@@ -254,6 +256,7 @@ func AnthropicMessages(c *gin.Context) {
 		Model:            strDeref(route.TargetModel, model),
 		Protocol:         "anthropic",
 		AnthropicVersion: defaultStr(c.GetHeader("anthropic-version"), "2023-06-01"),
+		RequestHeaders:   hdrpkg.FromMap(collectHeaders(c.Request.Header)),
 	}
 
 	status, headers, bodyRC, isStream, err := proxy.HandleAnthropic(c.Request.Context(), body, cfg)

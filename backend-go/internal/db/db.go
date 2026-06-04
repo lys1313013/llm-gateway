@@ -81,6 +81,8 @@ func initSchema(ctx context.Context) error {
 			target_url VARCHAR(255),
 			request_data JSONB,
 			response_data JSONB,
+			request_headers JSONB,
+			response_headers JSONB,
 			error_message TEXT,
 			protocol VARCHAR(50),
 			usage_data JSONB,
@@ -154,6 +156,8 @@ func initSchema(ctx context.Context) error {
 		`ALTER TABLE api_logs ADD COLUMN IF NOT EXISTS usage_data JSONB`,
 		`ALTER TABLE api_logs ADD COLUMN IF NOT EXISTS cache_creation_input_tokens INTEGER`,
 		`ALTER TABLE api_logs ADD COLUMN IF NOT EXISTS cache_read_input_tokens INTEGER`,
+		`ALTER TABLE api_logs ADD COLUMN IF NOT EXISTS request_headers JSONB`,
+		`ALTER TABLE api_logs ADD COLUMN IF NOT EXISTS response_headers JSONB`,
 		`ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS key_value VARCHAR(255)`,
 		`ALTER TABLE model_route ALTER COLUMN timeout SET DEFAULT -1`,
 	}

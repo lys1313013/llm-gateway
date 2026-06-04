@@ -26,6 +26,8 @@ type InsertLogInput struct {
 	TargetURL              *string
 	RequestData            []byte // JSON
 	ResponseData           []byte // JSON
+	RequestHeaders         []byte // JSON
+	ResponseHeaders        []byte // JSON
 	ErrorMessage           *string
 	Protocol               *string
 	UsageData              []byte // JSON
@@ -37,14 +39,17 @@ func InsertLog(ctx context.Context, in InsertLogInput) error {
 			model, is_stream, status_code, processing_time_ms,
 			prompt_tokens, completion_tokens, total_tokens,
 			cache_creation_input_tokens, cache_read_input_tokens,
-			target_url, request_data, response_data, error_message, protocol, usage_data
+			target_url, request_data, response_data,
+			request_headers, response_headers,
+			error_message, protocol, usage_data
 		) VALUES (
-			$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15
+			$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17
 		)`,
 		in.Model, in.IsStream, in.StatusCode, in.ProcessingTimeMs,
 		in.PromptTokens, in.CompletionTokens, in.TotalTokens,
 		in.CacheCreationInputTokens, in.CacheReadInputTokens,
 		in.TargetURL, jsonRawOrNil(in.RequestData), jsonRawOrNil(in.ResponseData),
+		jsonRawOrNil(in.RequestHeaders), jsonRawOrNil(in.ResponseHeaders),
 		in.ErrorMessage, in.Protocol, jsonRawOrNil(in.UsageData),
 	)
 	return err
@@ -83,7 +88,9 @@ func GetLogs(ctx context.Context, f LogListFilter) ([]models.APILog, error) {
 
 	q := `SELECT id, created_at, updated_at, model, is_stream, status_code,
 	             processing_time_ms, prompt_tokens, completion_tokens, total_tokens,
-	             target_url, request_data, response_data, error_message, protocol,
+	             target_url, request_data, response_data,
+	             request_headers, response_headers,
+	             error_message, protocol,
 	             usage_data, cache_creation_input_tokens, cache_read_input_tokens
 	      FROM api_logs WHERE 1=1`
 	args := []any{}
@@ -112,7 +119,9 @@ func GetLogs(ctx context.Context, f LogListFilter) ([]models.APILog, error) {
 func GetLogByID(ctx context.Context, id int) (*models.APILog, error) {
 	row := mustHavePool().QueryRow(ctx, `SELECT id, created_at, updated_at, model, is_stream, status_code,
 	             processing_time_ms, prompt_tokens, completion_tokens, total_tokens,
-	             target_url, request_data, response_data, error_message, protocol,
+	             target_url, request_data, response_data,
+	             request_headers, response_headers,
+	             error_message, protocol,
 	             usage_data, cache_creation_input_tokens, cache_read_input_tokens
 	         FROM api_logs WHERE id = $1`, id)
 	l, err := scanLog(row)
@@ -318,7 +327,9 @@ func scanLog(row rowScanner) (*models.APILog, error) {
 	err := row.Scan(
 		&l.ID, &l.CreatedAt, &l.UpdatedAt, &l.Model, &l.IsStream, &l.StatusCode,
 		&l.ProcessingTimeMs, &l.PromptTokens, &l.CompletionTokens, &l.TotalTokens,
-		&l.TargetURL, &l.RequestData, &l.ResponseData, &l.ErrorMessage, &l.Protocol,
+		&l.TargetURL, &l.RequestData, &l.ResponseData,
+		&l.RequestHeaders, &l.ResponseHeaders,
+		&l.ErrorMessage, &l.Protocol,
 		&l.UsageData, &l.CacheCreationInputTokens, &l.CacheReadInputTokens,
 	)
 	if err != nil {
@@ -339,7 +350,9 @@ func scanLogs(rows interface {
 		if err := rows.Scan(
 			&l.ID, &l.CreatedAt, &l.UpdatedAt, &l.Model, &l.IsStream, &l.StatusCode,
 			&l.ProcessingTimeMs, &l.PromptTokens, &l.CompletionTokens, &l.TotalTokens,
-			&l.TargetURL, &l.RequestData, &l.ResponseData, &l.ErrorMessage, &l.Protocol,
+			&l.TargetURL, &l.RequestData, &l.ResponseData,
+			&l.RequestHeaders, &l.ResponseHeaders,
+			&l.ErrorMessage, &l.Protocol,
 			&l.UsageData, &l.CacheCreationInputTokens, &l.CacheReadInputTokens,
 		); err != nil {
 			return nil, err

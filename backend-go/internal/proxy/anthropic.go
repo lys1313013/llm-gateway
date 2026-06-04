@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/lys1313013/llm-gateway/backend-go/internal/db"
+	hdrpkg "github.com/lys1313013/llm-gateway/backend-go/internal/headers"
 	"github.com/lys1313013/llm-gateway/backend-go/internal/models"
 	"github.com/lys1313013/llm-gateway/backend-go/internal/token"
 )
@@ -81,6 +82,8 @@ func HandleAnthropic(ctx context.Context, requestData []byte, cfg models.ProxyCo
 			TargetURL:        strPtr(cfg.TargetURL),
 			RequestData:      requestData,
 			ResponseData:     respBytes,
+			RequestHeaders:   hdrpkg.ToJSON(cfg.RequestHeaders),
+			ResponseHeaders:  hdrpkg.ToJSON(hdrpkg.FromHTTPHeader(resp.Header)),
 			ErrorMessage:     strPtr(fmt.Sprintf("Target API returned error: %d", resp.StatusCode)),
 			Protocol:         strPtr(cfg.Protocol),
 		})
@@ -106,13 +109,15 @@ func HandleAnthropic(ctx context.Context, requestData []byte, cfg models.ProxyCo
 
 	if isStream {
 		streamer := &anthropicStreamer{
-			resp:         resp.Body,
-			logResponses: cfg.LogResponses,
-			targetURL:    cfg.TargetURL,
-			requestData:  requestData,
-			protocol:     cfg.Protocol,
-			start:        start,
-			model:        modelFromRequest(probe, cfg.Model),
+			resp:            resp.Body,
+			logResponses:    cfg.LogResponses,
+			targetURL:       cfg.TargetURL,
+			requestData:     requestData,
+			protocol:        cfg.Protocol,
+			start:           start,
+			model:           modelFromRequest(probe, cfg.Model),
+			requestHeaders:  cfg.RequestHeaders,
+			responseHeaders: hdrpkg.FromHTTPHeader(resp.Header),
 		}
 		return resp.StatusCode, resp.Header, streamer, true, nil
 	}
@@ -146,6 +151,8 @@ func HandleAnthropic(ctx context.Context, requestData []byte, cfg models.ProxyCo
 		TargetURL:                strPtr(cfg.TargetURL),
 		RequestData:              requestData,
 		ResponseData:             body,
+		RequestHeaders:           hdrpkg.ToJSON(cfg.RequestHeaders),
+		ResponseHeaders:          hdrpkg.ToJSON(hdrpkg.FromHTTPHeader(resp.Header)),
 		Protocol:                 strPtr(cfg.Protocol),
 		UsageData:                norm.Raw,
 	})
@@ -154,13 +161,15 @@ func HandleAnthropic(ctx context.Context, requestData []byte, cfg models.ProxyCo
 }
 
 type anthropicStreamer struct {
-	resp         io.ReadCloser
-	logResponses bool
-	targetURL    string
-	requestData  []byte
-	protocol     string
-	start        time.Time
-	model        string
+	resp            io.ReadCloser
+	logResponses    bool
+	targetURL       string
+	requestData     []byte
+	protocol        string
+	start           time.Time
+	model           string
+	requestHeaders  map[string]string
+	responseHeaders map[string]string
 
 	pending  []byte
 	finished bool
@@ -222,6 +231,8 @@ func (s *anthropicStreamer) finalize() {
 		TargetURL:                strPtr(s.targetURL),
 		RequestData:              s.requestData,
 		ResponseData:             aggJSON,
+		RequestHeaders:           hdrpkg.ToJSON(s.requestHeaders),
+		ResponseHeaders:          hdrpkg.ToJSON(s.responseHeaders),
 		Protocol:                 strPtr(s.protocol),
 		UsageData:                norm.Raw,
 	})

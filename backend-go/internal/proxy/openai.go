@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/lys1313013/llm-gateway/backend-go/internal/db"
+	hdrpkg "github.com/lys1313013/llm-gateway/backend-go/internal/headers"
 	"github.com/lys1313013/llm-gateway/backend-go/internal/models"
 	"github.com/lys1313013/llm-gateway/backend-go/internal/token"
 )
@@ -81,6 +82,8 @@ func HandleOpenAI(ctx context.Context, requestData []byte, cfg models.ProxyConfi
 			TargetURL:      strPtr(cfg.TargetURL),
 			RequestData:    requestData,
 			ResponseData:   body,
+			RequestHeaders: hdrpkg.ToJSON(cfg.RequestHeaders),
+			ResponseHeaders: hdrpkg.ToJSON(hdrpkg.FromHTTPHeader(resp.Header)),
 			ErrorMessage:   strPtr(fmt.Sprintf("Target API returned error: %d", resp.StatusCode)),
 			Protocol:       strPtr(cfg.Protocol),
 		})
@@ -92,13 +95,15 @@ func HandleOpenAI(ctx context.Context, requestData []byte, cfg models.ProxyConfi
 		// Caller is responsible for logging the aggregated stream result
 		// after the stream is fully consumed.
 		streamer := &openaiStreamer{
-			resp:         resp.Body,
-			logResponses: cfg.LogResponses,
-			targetURL:    cfg.TargetURL,
-			requestData:  requestData,
-			protocol:     cfg.Protocol,
-			start:        start,
-			model:        modelFromRequest(probe, cfg.Model),
+			resp:           resp.Body,
+			logResponses:   cfg.LogResponses,
+			targetURL:      cfg.TargetURL,
+			requestData:    requestData,
+			protocol:       cfg.Protocol,
+			start:          start,
+			model:          modelFromRequest(probe, cfg.Model),
+			requestHeaders: cfg.RequestHeaders,
+			responseHeaders: hdrpkg.FromHTTPHeader(resp.Header),
 		}
 		return resp.StatusCode, resp.Header, streamer, true, nil
 	}
@@ -135,6 +140,8 @@ func HandleOpenAI(ctx context.Context, requestData []byte, cfg models.ProxyConfi
 		TargetURL:                strPtr(cfg.TargetURL),
 		RequestData:              requestData,
 		ResponseData:             body,
+		RequestHeaders:           hdrpkg.ToJSON(cfg.RequestHeaders),
+		ResponseHeaders:          hdrpkg.ToJSON(hdrpkg.FromHTTPHeader(resp.Header)),
 		Protocol:                 strPtr(cfg.Protocol),
 		UsageData:                norm.Raw,
 	})
@@ -146,13 +153,15 @@ func HandleOpenAI(ctx context.Context, requestData []byte, cfg models.ProxyConfi
 // normal http.Response.Body. When EOF is reached it inserts one api_log row
 // with the aggregated stream contents.
 type openaiStreamer struct {
-	resp         io.ReadCloser
-	logResponses bool
-	targetURL    string
-	requestData  []byte
-	protocol     string
-	start        time.Time
-	model        string
+	resp            io.ReadCloser
+	logResponses    bool
+	targetURL       string
+	requestData     []byte
+	protocol        string
+	start           time.Time
+	model           string
+	requestHeaders  map[string]string
+	responseHeaders map[string]string
 
 	pending  []byte
 	finished bool
@@ -215,6 +224,8 @@ func (s *openaiStreamer) finalize() {
 		TargetURL:                strPtr(s.targetURL),
 		RequestData:              s.requestData,
 		ResponseData:             aggJSON,
+		RequestHeaders:           hdrpkg.ToJSON(s.requestHeaders),
+		ResponseHeaders:          hdrpkg.ToJSON(s.responseHeaders),
 		Protocol:                 strPtr(s.protocol),
 		UsageData:                norm.Raw,
 	})
@@ -404,6 +415,7 @@ func logProxyError(ctx context.Context, requestData []byte, cfg models.ProxyConf
 		ProcessingTimeMs: int(time.Since(start).Milliseconds()),
 		TargetURL:        strPtr(cfg.TargetURL),
 		RequestData:      requestData,
+		RequestHeaders:   hdrpkg.ToJSON(cfg.RequestHeaders),
 		ErrorMessage:     strPtr(msg),
 		Protocol:         strPtr(cfg.Protocol),
 	})
