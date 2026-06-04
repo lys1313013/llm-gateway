@@ -1,13 +1,11 @@
 # LLM Gateway (Go)
 
-Go rewrite of the [Python LLM Gateway](../backend) — same HTTP surface, same
-PostgreSQL schema, drop-in replacement for the existing admin UI and LLM
-SDKs.
+Go implementation of the LLM Gateway — same HTTP surface, same PostgreSQL
+schema, drop-in replacement for the existing admin UI and LLM SDKs.
 
 ## Why
 
-The Python/Flask backend was the bottleneck under sustained traffic. Go
-gives us a single statically-linked binary, native concurrency, and an
+Go gives us a single statically-linked binary, native concurrency, and an
 order-of-magnitude reduction in memory + cold-start.
 
 ## Tech stack
@@ -47,14 +45,30 @@ backend-go/
 ## Quick start
 
 ```bash
-# 1. Start PostgreSQL (the same instance the Python backend uses)
+# 1. Start PostgreSQL
 cd ..
 docker-compose -f docker-compose.db.yml up -d
 
-# 2. Start the Go server (port 5002 by default — leaves Python on 5001)
+# 2. Start the Go server
 cd backend-go
 go run ./cmd/gateway
 ```
+
+### Hot reload (local dev)
+
+Install [Air](https://github.com/air-verse/air) once, then run it from
+`backend-go/`. It watches `cmd/` and `internal/`, rebuilds on save, and
+restarts the binary — kill with Ctrl-C.
+
+```bash
+go install github.com/air-verse/air@latest
+export PATH=$PATH:$(go env GOPATH)/bin
+cd backend-go
+air
+```
+
+Config lives in [`.air.toml`](.air.toml). `migrations/`, `tests/`, and
+`tmp/` are excluded so SQL/test edits don't trigger a rebuild.
 
 The server reads its config from env vars (or a local `.env`). The
 relevant keys are:
@@ -72,15 +86,14 @@ relevant keys are:
 | `LOG_LEVEL`       | `info`               |
 
 The server creates the default admin user (`admin` / `llm_gateway`) on
-first boot if the `users` table is empty — same behaviour as the Python
-backend.
+first boot if the `users` table is empty.
 
 ## Cross-language password compatibility
 
 The Go `auth` package emits and verifies the same
 `pbkdf2:sha256:NUM$salt$hash` format that Werkzeug 3.x uses, so a user
-created in either backend can log in via the other. The round-trip is
-covered by:
+hash created by the legacy Python backend can be verified here. The
+round-trip is covered by:
 
 ```bash
 python3 internal/auth/cross_test.py

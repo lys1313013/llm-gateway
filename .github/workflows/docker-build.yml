@@ -14,56 +14,7 @@ env:
 
 jobs:
   # ---------------------------------------------------------------------------
-  # Python (legacy) backend — kept while Go backend rolls out.
-  # Image: ghcr.io/<owner>/llm-gateway-backend
-  # ---------------------------------------------------------------------------
-  build-backend-python:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Login to GHCR
-        if: github.event_name != 'pull_request'
-        uses: docker/login-action@v3
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Extract metadata
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_OWNER }}/llm-gateway-backend
-          tags: |
-            type=raw,value=latest,enable={{is_default_branch}}
-            type=ref,event=branch
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=sha,prefix=sha-
-
-      - name: Build and push
-        uses: docker/build-push-action@v6
-        with:
-          context: ./backend
-          platforms: linux/amd64
-          push: ${{ github.event_name != 'pull_request' }}
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-  # ---------------------------------------------------------------------------
-  # Go backend (new) — drop-in replacement for the Python backend.
-  # Image: ghcr.io/<owner>/llm-gateway-backend-go
+  # Go backend — image: ghcr.io/<owner>/llm-gateway-backend-go
   # Dockerfile lives at backend-go/Dockerfile (multi-stage, distroless).
   # ---------------------------------------------------------------------------
   build-backend-go:
@@ -108,9 +59,6 @@ jobs:
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          # Go multi-stage build benefits less from GHA cache than Python
-          # (the build layer is fast), but the final image (distroless) is
-          # stable so we still enable it for cold-start speedups.
           cache-from: type=gha
           cache-to: type=gha,mode=max
 

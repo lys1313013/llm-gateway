@@ -2,7 +2,7 @@
 
 > 一个兼容 **OpenAI** 与 **Anthropic** 双协议的大模型 API 网关，用于开发、测试和生产环境的统一接入与流量管理。
 
-[![Python](https://img.shields.io/badge/Python-3.x-blue?logo=python)](backend/requirements.txt)
+[![Go](https://img.shields.io/badge/Go-1.x-00add8?logo=go)](backend-go/go.mod)
 [![React](https://img.shields.io/badge/React-19-61dafb?logo=react)](frontend/package.json)
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-15-336791?logo=postgresql)](docker-compose.yml)
 [![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
@@ -39,12 +39,11 @@
 
 ```bash
 # 1. 启动 PostgreSQL
-docker-compose up -d
+docker-compose -f docker-compose.db.yml up -d
 
 # 2. 启动后端（默认端口 5001）
-cd backend
-pip install -r requirements.txt
-python app.py --port 5001
+cd backend-go
+go run ./cmd/gateway
 
 # 3. 启动管理后台（开发模式，端口 18888）
 cd frontend
@@ -76,22 +75,21 @@ pnpm dev
 
 ```
 .
-├── backend/
-│   ├── app.py                     # Flask 主入口，注册路由与管理 API
-│   ├── db.py                      # PostgreSQL 数据层（DDL / CRUD / 统计）
-│   ├── token_utils.py             # Token 估算（tiktoken）
-│   ├── requirements.txt           # Python 依赖
-│   ├── Dockerfile                 # 后端容器构建
-│   ├── routes/
-│   │   ├── chat.py                # OpenAI 兼容路由
-│   │   ├── anthropic.py           # Anthropic 兼容路由
-│   │   └── admin.py               # 管理后台 CRUD API
-│   ├── services/
-│   │   ├── proxy.py               # OpenAI 代理转发（流式 / 非流式）
-│   │   └── anthropic_proxy.py     # Anthropic 代理转发（SSE / 非流式）
-│   └── tests/
-│       ├── test_tool_call.py
-│       └── test_stream_tool_call.py
+├── backend-go/
+│   ├── cmd/gateway/               # HTTP 服务入口
+│   ├── internal/
+│   │   ├── auth/                  # 密码 + JWT + API Key
+│   │   ├── config/                # env 加载
+│   │   ├── db/                    # pgx 连接池 + schema + CRUD
+│   │   ├── handlers/              # gin 路由（chat / anthropic / admin / auth / test）
+│   │   ├── middleware/            # auth + CORS
+│   │   ├── models/                # 领域类型
+│   │   ├── proxy/                 # OpenAI / Anthropic 转发 + SSE
+│   │   └── token/                 # tiktoken + 用量归一化
+│   ├── migrations/                # 规范 SQL（启动时也会自动应用）
+│   ├── Dockerfile                 # 多阶段构建（distroless）
+│   ├── go.mod
+│   └── README.md
 ├── frontend/
 │   ├── src/
 │   │   ├── App.tsx                # 主布局（侧边栏 + 内容区）
@@ -104,7 +102,7 @@ pnpm dev
 │   │   └── JsonViewer.tsx         # JSON 查看器（Monaco Editor）
 │   ├── vite.config.ts             # Vite 配置（端口 18888，代理 /api、/v1）
 │   └── package.json
-├── docker-compose.yml             # PostgreSQL 容器
+├── docker-compose.db.yml         # PostgreSQL 容器
 ├── README.md
 └── 需求文档.md
 ```
@@ -238,10 +236,10 @@ print(msg.content[0].text)
 
 | 层 | 技术 |
 |----|------|
-| 后端 | Python 3.x + Flask |
-| 数据库 | PostgreSQL 15（psycopg2-binary） |
-| HTTP 转发 | requests |
-| Token 估算 | tiktoken |
+| 后端 | Go 1.x + Gin |
+| 数据库 | PostgreSQL 15（pgx v5 / pgxpool） |
+| HTTP 转发 | net/http + fasthttp |
+| Token 估算 | tiktoken-go |
 | 前端 | React 19 + TypeScript + Vite 8 |
 | UI | Ant Design 6 + @ant-design/plots 2 |
 | 代码编辑器 | @monaco-editor/react |

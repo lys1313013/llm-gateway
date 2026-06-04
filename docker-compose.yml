@@ -1,32 +1,17 @@
 # LLM Gateway — unified docker-compose
 #
-# Two backend images are published side-by-side while the Go migration is
-# in progress:
-#   * llm-gateway-backend         (Python, legacy)
-#   * llm-gateway-backend-go      (Go, new — drop-in replacement)
-#
-# The frontend is the same either way. Use one of the profiles below to
-# pick which backend to run:
-#
-#   docker-compose --profile python up -d   # start Python backend
-#   docker-compose --profile go up -d      # start Go backend (default)
-#   docker-compose --profile both up -d    # start both side-by-side
-#
-# Both backends talk to the same PostgreSQL container (docker-compose.db.yml)
-# and bind to different host ports (5001 vs 5002). Once you've verified the
-# Go backend, stop the Python service and remove the `python` profile.
+# Single Go backend serves both the OpenAI and Anthropic protocol surfaces,
+# talks to the shared PostgreSQL container (docker-compose.db.yml), and binds
+# to host port 33352 by default.
 
 services:
   # ---------------------------------------------------------------------------
-  # Go backend (recommended) — image: ghcr.io/<owner>/llm-gateway-backend-go
-  # Listens on container port 5001 (matches the legacy Python backend and the
-  # frontend nginx proxy); host port is 5002 by default to avoid clashing
-  # with a Python backend that may also be running.
+  # Go backend — image: ghcr.io/<owner>/llm-gateway-backend-go
+  # Listens on container port 5001, which the frontend nginx proxies to.
   # ---------------------------------------------------------------------------
   backend-go:
     image: ghcr.io/lys1313013/llm-gateway-backend-go:latest
     container_name: llm_gateway_backend_go
-    profiles: ["go", "both"]
     networks:
       default:
         aliases:
@@ -53,40 +38,12 @@ services:
       start_period: 10s
 
   # ---------------------------------------------------------------------------
-  # Python backend (legacy) — image: ghcr.io/<owner>/llm-gateway-backend
-  # ---------------------------------------------------------------------------
-  backend-python:
-    image: ghcr.io/lys1313013/llm-gateway-backend:latest
-    container_name: llm_gateway_backend
-    profiles: ["python", "both"]
-    networks:
-      default:
-        aliases:
-          - backend
-    environment:
-      FLASK_DEBUG: "false"
-      DB_HOST: ${DB_HOST:-host.docker.internal}
-      DB_PORT: ${DB_PORT:-5432}
-      DB_NAME: ${DB_NAME:-llm_gateway}
-      DB_USER: ${DB_USER:-postgres}
-      DB_PASSWORD: ${DB_PASSWORD:-password}
-      DB_TIMEZONE: ${DB_TIMEZONE:-Asia/Shanghai}
-      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-change-me-to-a-random-secret-string}
-    ports:
-      - "${BACKEND_PYTHON_HOST_PORT:-33351}:5001"
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-    restart: always
-
-  # ---------------------------------------------------------------------------
   # Frontend — image: ghcr.io/<owner>/llm-gateway-frontend
   # The Vite dev server inside the container listens on 80.
   # For dev mode, run `pnpm dev` on the host (port 18888) instead of using
   # this container — see README.
   #
-  # nginx.conf proxies /api and /v1 to host `backend:5001`. Both the Go and
-  # Python backend services register a `backend` network alias, so this
-  # works regardless of which profile you start.
+  # nginx.conf proxies /api and /v1 to host `backend:5001`.
   # ---------------------------------------------------------------------------
   frontend:
     image: ghcr.io/lys1313013/llm-gateway-frontend:latest
