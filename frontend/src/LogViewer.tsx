@@ -44,7 +44,7 @@ const LogViewer = () => {
       const result = await res.json()
       if (result.success) {
         setTodayStats({
-          requestCount: result.data.request_count,
+          requestCount: result.data.total_requests,
           promptTokens: result.data.prompt_tokens,
           completionTokens: result.data.completion_tokens,
           totalTokens: result.data.total_tokens,
@@ -266,13 +266,13 @@ const LogViewer = () => {
           <Card><Statistic title="今日请求次数" value={todayStats.requestCount} /></Card>
         </Col>
         <Col span={6}>
+          <Card><Statistic title="今日总计 Token" value={todayStats.totalTokens} /></Card>
+        </Col>
+        <Col span={6}>
           <Card><Statistic title="今日输入 Token" value={todayStats.promptTokens} /></Card>
         </Col>
         <Col span={6}>
           <Card><Statistic title="今日输出 Token" value={todayStats.completionTokens} /></Card>
-        </Col>
-        <Col span={6}>
-          <Card><Statistic title="今日总计 Token" value={todayStats.totalTokens} /></Card>
         </Col>
       </Row>
 
