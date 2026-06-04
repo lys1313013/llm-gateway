@@ -14,10 +14,10 @@ env:
 
 jobs:
   # ---------------------------------------------------------------------------
-  # Go backend — image: ghcr.io/<owner>/llm-gateway-backend-go
-  # Dockerfile lives at backend-go/Dockerfile (multi-stage, distroless).
+  # Go backend — image: ghcr.io/<owner>/llm-gateway-backend
+  # Dockerfile lives at backend/Dockerfile (multi-stage, distroless).
   # ---------------------------------------------------------------------------
-  build-backend-go:
+  build-backend:
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -42,7 +42,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_OWNER }}/llm-gateway-backend-go
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_OWNER }}/llm-gateway-backend
           tags: |
             type=raw,value=latest,enable={{is_default_branch}}
             type=ref,event=branch
@@ -53,8 +53,8 @@ jobs:
       - name: Build and push
         uses: docker/build-push-action@v6
         with:
-          context: ./backend-go
-          file: ./backend-go/Dockerfile
+          context: ./backend
+          file: ./backend/Dockerfile
           platforms: linux/amd64
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}

@@ -2,7 +2,7 @@
 
 > 一个兼容 **OpenAI** 与 **Anthropic** 双协议的大模型 API 网关，用于开发、测试和生产环境的统一接入与流量管理。
 
-[![Go](https://img.shields.io/badge/Go-1.x-00add8?logo=go)](backend-go/go.mod)
+[![Go](https://img.shields.io/badge/Go-1.x-00add8?logo=go)](backend/go.mod)
 [![React](https://img.shields.io/badge/React-19-61dafb?logo=react)](frontend/package.json)
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-15-336791?logo=postgresql)](docker-compose.yml)
 [![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
@@ -42,7 +42,7 @@
 docker-compose -f docker-compose.db.yml up -d
 
 # 2. 启动后端（默认端口 5001）
-cd backend-go
+cd backend
 go run ./cmd/gateway
 
 # 3. 启动管理后台（开发模式，端口 18888）
@@ -75,7 +75,7 @@ pnpm dev
 
 ```
 .
-├── backend-go/
+├── backend/
 │   ├── cmd/gateway/               # HTTP 服务入口
 │   ├── internal/
 │   │   ├── auth/                  # 密码 + JWT + API Key
@@ -86,7 +86,6 @@ pnpm dev
 │   │   ├── models/                # 领域类型
 │   │   ├── proxy/                 # OpenAI / Anthropic 转发 + SSE
 │   │   └── token/                 # tiktoken + 用量归一化
-│   ├── migrations/                # 规范 SQL（启动时也会自动应用）
 │   ├── Dockerfile                 # 多阶段构建（distroless）
 │   ├── go.mod
 │   └── README.md

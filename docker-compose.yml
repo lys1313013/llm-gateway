@@ -6,12 +6,12 @@
 
 services:
   # ---------------------------------------------------------------------------
-  # Go backend — image: ghcr.io/<owner>/llm-gateway-backend-go
+  # Go backend — image: ghcr.io/<owner>/llm-gateway-backend
   # Listens on container port 5001, which the frontend nginx proxies to.
   # ---------------------------------------------------------------------------
-  backend-go:
-    image: ghcr.io/lys1313013/llm-gateway-backend-go:latest
-    container_name: llm_gateway_backend_go
+  backend:
+    image: ghcr.io/lys1313013/llm-gateway-backend:latest
+    container_name: llm_gateway_backend
     networks:
       default:
         aliases:
@@ -26,7 +26,7 @@ services:
       JWT_SECRET_KEY: ${JWT_SECRET_KEY:-change-me-to-a-random-secret-string}
       LOG_LEVEL: ${LOG_LEVEL:-info}
     ports:
-      - "${BACKEND_GO_HOST_PORT:-33352}:5001"
+      - "${BACKEND_HOST_PORT:-33352}:5001"
     extra_hosts:
       - "host.docker.internal:host-gateway"
     restart: always
