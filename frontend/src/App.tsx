@@ -95,6 +95,10 @@ const App = () => {
     window.location.hash = '#/login'
   }, [])
 
+  // Must be declared before any early return so the hook order stays stable
+  // across auth transitions.
+  const [changePasswordOpen, setChangePasswordOpen] = useState(false)
+
   // Show login/register pages without sidebar
   if (!authed) {
     if (hashPage === 'register') {
@@ -110,7 +114,6 @@ const App = () => {
   const openKeys: string[] = []
 
   const user = getCurrentUser()
-  const [changePasswordOpen, setChangePasswordOpen] = useState(false)
 
   const userMenuItems = [
     {
