@@ -86,10 +86,13 @@ func GetLogs(ctx context.Context, f LogListFilter) ([]models.APILog, error) {
 		offset = 0
 	}
 
+	// List query omits request_data / response_data / request_headers /
+	// response_headers — those JSONB columns are large, and the detail
+	// endpoint (/api/logs/:id) returns them on demand. Mirrors the perf
+	// optimization originally added in bf8576c for the Python backend.
 	q := `SELECT id, created_at, updated_at, model, is_stream, status_code,
 	             processing_time_ms, prompt_tokens, completion_tokens, total_tokens,
-	             target_url, request_data, response_data,
-	             request_headers, response_headers,
+	             target_url,
 	             error_message, protocol,
 	             usage_data, cache_creation_input_tokens, cache_read_input_tokens
 	      FROM api_logs WHERE 1=1`
@@ -350,8 +353,7 @@ func scanLogs(rows interface {
 		if err := rows.Scan(
 			&l.ID, &l.CreatedAt, &l.UpdatedAt, &l.Model, &l.IsStream, &l.StatusCode,
 			&l.ProcessingTimeMs, &l.PromptTokens, &l.CompletionTokens, &l.TotalTokens,
-			&l.TargetURL, &l.RequestData, &l.ResponseData,
-			&l.RequestHeaders, &l.ResponseHeaders,
+			&l.TargetURL,
 			&l.ErrorMessage, &l.Protocol,
 			&l.UsageData, &l.CacheCreationInputTokens, &l.CacheReadInputTokens,
 		); err != nil {
