@@ -76,6 +76,8 @@ func HandleAnthropic(ctx context.Context, requestData []byte, cfg models.ProxyCo
 
 		_ = db.InsertLog(ctx, db.InsertLogInput{
 			Model:            strPtr(modelFromRequest(probe, cfg.Model)),
+			ProviderID:       cfg.ProviderID,
+			ProviderName:     strPtrOrNil(cfg.ProviderName),
 			IsStream:         isStream,
 			StatusCode:       resp.StatusCode,
 			ProcessingTimeMs: int(time.Since(start).Milliseconds()),
@@ -114,6 +116,8 @@ func HandleAnthropic(ctx context.Context, requestData []byte, cfg models.ProxyCo
 			targetURL:       cfg.TargetURL,
 			requestData:     requestData,
 			protocol:        cfg.Protocol,
+			providerID:      cfg.ProviderID,
+			providerName:    strPtrOrNil(cfg.ProviderName),
 			start:           start,
 			model:           modelFromRequest(probe, cfg.Model),
 			requestHeaders:  cfg.RequestHeaders,
@@ -140,6 +144,8 @@ func HandleAnthropic(ctx context.Context, requestData []byte, cfg models.ProxyCo
 
 	_ = db.InsertLog(ctx, db.InsertLogInput{
 		Model:                    strPtr(modelFromRequest(probe, cfg.Model)),
+		ProviderID:               cfg.ProviderID,
+		ProviderName:             strPtrOrNil(cfg.ProviderName),
 		IsStream:                 false,
 		StatusCode:               resp.StatusCode,
 		ProcessingTimeMs:         int(time.Since(start).Milliseconds()),
@@ -166,6 +172,8 @@ type anthropicStreamer struct {
 	targetURL       string
 	requestData     []byte
 	protocol        string
+	providerID      *int
+	providerName    *string
 	start           time.Time
 	model           string
 	requestHeaders  map[string]string
@@ -220,6 +228,8 @@ func (s *anthropicStreamer) finalize() {
 
 	_ = db.InsertLog(ctx, db.InsertLogInput{
 		Model:                    strPtr(s.model),
+		ProviderID:               s.providerID,
+		ProviderName:             s.providerName,
 		IsStream:                 true,
 		StatusCode:               http.StatusOK,
 		ProcessingTimeMs:         int(time.Since(s.start).Milliseconds()),

@@ -15,6 +15,8 @@ import (
 
 type InsertLogInput struct {
 	Model                  *string
+	ProviderID             *int
+	ProviderName           *string
 	IsStream               bool
 	StatusCode             int
 	ProcessingTimeMs       int
@@ -36,16 +38,18 @@ type InsertLogInput struct {
 func InsertLog(ctx context.Context, in InsertLogInput) error {
 	_, err := mustHavePool().Exec(ctx, `
 		INSERT INTO api_logs (
-			model, is_stream, status_code, processing_time_ms,
+			model, provider_id, provider_name,
+			is_stream, status_code, processing_time_ms,
 			prompt_tokens, completion_tokens, total_tokens,
 			cache_creation_input_tokens, cache_read_input_tokens,
 			target_url, request_data, response_data,
 			request_headers, response_headers,
 			error_message, protocol, usage_data
 		) VALUES (
-			$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17
+			$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19
 		)`,
-		in.Model, in.IsStream, in.StatusCode, in.ProcessingTimeMs,
+		in.Model, in.ProviderID, in.ProviderName,
+		in.IsStream, in.StatusCode, in.ProcessingTimeMs,
 		in.PromptTokens, in.CompletionTokens, in.TotalTokens,
 		in.CacheCreationInputTokens, in.CacheReadInputTokens,
 		in.TargetURL, jsonRawOrNil(in.RequestData), jsonRawOrNil(in.ResponseData),
@@ -90,7 +94,8 @@ func GetLogs(ctx context.Context, f LogListFilter) ([]models.APILog, error) {
 	// response_headers — those JSONB columns are large, and the detail
 	// endpoint (/api/logs/:id) returns them on demand. Mirrors the perf
 	// optimization originally added in bf8576c for the Python backend.
-	q := `SELECT id, created_at, updated_at, model, is_stream, status_code,
+	q := `SELECT id, created_at, updated_at, model, provider_id, provider_name,
+	             is_stream, status_code,
 	             processing_time_ms, prompt_tokens, completion_tokens, total_tokens,
 	             target_url,
 	             error_message, protocol,
@@ -120,7 +125,8 @@ func GetLogs(ctx context.Context, f LogListFilter) ([]models.APILog, error) {
 }
 
 func GetLogByID(ctx context.Context, id int) (*models.APILog, error) {
-	row := mustHavePool().QueryRow(ctx, `SELECT id, created_at, updated_at, model, is_stream, status_code,
+	row := mustHavePool().QueryRow(ctx, `SELECT id, created_at, updated_at, model, provider_id, provider_name,
+	             is_stream, status_code,
 	             processing_time_ms, prompt_tokens, completion_tokens, total_tokens,
 	             target_url, request_data, response_data,
 	             request_headers, response_headers,
@@ -328,7 +334,8 @@ func nullDate(s string) any {
 func scanLog(row rowScanner) (*models.APILog, error) {
 	var l models.APILog
 	err := row.Scan(
-		&l.ID, &l.CreatedAt, &l.UpdatedAt, &l.Model, &l.IsStream, &l.StatusCode,
+		&l.ID, &l.CreatedAt, &l.UpdatedAt, &l.Model, &l.ProviderID, &l.ProviderName,
+		&l.IsStream, &l.StatusCode,
 		&l.ProcessingTimeMs, &l.PromptTokens, &l.CompletionTokens, &l.TotalTokens,
 		&l.TargetURL, &l.RequestData, &l.ResponseData,
 		&l.RequestHeaders, &l.ResponseHeaders,
@@ -351,7 +358,8 @@ func scanLogs(rows interface {
 	for rows.Next() {
 		var l models.APILog
 		if err := rows.Scan(
-			&l.ID, &l.CreatedAt, &l.UpdatedAt, &l.Model, &l.IsStream, &l.StatusCode,
+			&l.ID, &l.CreatedAt, &l.UpdatedAt, &l.Model, &l.ProviderID, &l.ProviderName,
+			&l.IsStream, &l.StatusCode,
 			&l.ProcessingTimeMs, &l.PromptTokens, &l.CompletionTokens, &l.TotalTokens,
 			&l.TargetURL,
 			&l.ErrorMessage, &l.Protocol,

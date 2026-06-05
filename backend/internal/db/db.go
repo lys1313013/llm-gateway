@@ -72,6 +72,8 @@ func initSchema(ctx context.Context) error {
 			created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
 			updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
 			model VARCHAR(100),
+			provider_id INTEGER REFERENCES provider(id) ON DELETE SET NULL,
+			provider_name VARCHAR(100),
 			is_stream BOOLEAN DEFAULT FALSE,
 			status_code INTEGER,
 			processing_time_ms INTEGER,
@@ -158,6 +160,8 @@ func initSchema(ctx context.Context) error {
 		`ALTER TABLE api_logs ADD COLUMN IF NOT EXISTS cache_read_input_tokens INTEGER`,
 		`ALTER TABLE api_logs ADD COLUMN IF NOT EXISTS request_headers JSONB`,
 		`ALTER TABLE api_logs ADD COLUMN IF NOT EXISTS response_headers JSONB`,
+		`ALTER TABLE api_logs ADD COLUMN IF NOT EXISTS provider_id INTEGER REFERENCES provider(id) ON DELETE SET NULL`,
+		`ALTER TABLE api_logs ADD COLUMN IF NOT EXISTS provider_name VARCHAR(100)`,
 		`ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS key_value VARCHAR(255)`,
 		`ALTER TABLE model_route ALTER COLUMN timeout SET DEFAULT -1`,
 	}

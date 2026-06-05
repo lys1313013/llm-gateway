@@ -38,6 +38,7 @@ type ModelRoute struct {
 	OpenAIBaseURL    *string `json:"openai_base_url,omitempty"`
 	AnthropicBaseURL *string `json:"anthropic_base_url,omitempty"`
 	APIKey           *string `json:"api_key,omitempty"`
+	ProviderName     *string `json:"provider_name,omitempty"`
 }
 
 type ExposedModel struct {
@@ -78,6 +79,8 @@ type APILog struct {
 	CreatedAt              time.Time       `json:"created_at"`
 	UpdatedAt              time.Time       `json:"updated_at"`
 	Model                  *string         `json:"model,omitempty"`
+	ProviderID             *int            `json:"provider_id,omitempty"`
+	ProviderName           *string         `json:"provider_name,omitempty"`
 	IsStream               bool            `json:"is_stream"`
 	StatusCode             *int            `json:"status_code,omitempty"`
 	ProcessingTimeMs       *int            `json:"processing_time_ms,omitempty"`
@@ -109,6 +112,8 @@ type ProxyConfig struct {
 	Model            string
 	Protocol         string // "openai" | "anthropic"
 	AnthropicVersion string
+	ProviderID       *int   // snapshot of model_route.provider_id at match time
+	ProviderName     string // snapshot of provider.name at match time
 	// RequestHeaders is the sanitized incoming request header map (auth
 	// headers removed). Stored in api_logs.request_headers.
 	RequestHeaders map[string]string

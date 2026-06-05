@@ -88,6 +88,8 @@ func ChatCompletions(c *gin.Context) {
 		LogResponses:   route.LogResponses,
 		Model:          strDeref(route.TargetModel, model),
 		Protocol:       "openai",
+		ProviderID:     route.ProviderID,
+		ProviderName:   strDeref(route.ProviderName),
 		RequestHeaders: hdrpkg.FromMap(collectHeaders(c.Request.Header)),
 	}
 
@@ -256,6 +258,8 @@ func AnthropicMessages(c *gin.Context) {
 		Model:            strDeref(route.TargetModel, model),
 		Protocol:         "anthropic",
 		AnthropicVersion: defaultStr(c.GetHeader("anthropic-version"), "2023-06-01"),
+		ProviderID:       route.ProviderID,
+		ProviderName:     strDeref(route.ProviderName),
 		RequestHeaders:   hdrpkg.FromMap(collectHeaders(c.Request.Header)),
 	}
 

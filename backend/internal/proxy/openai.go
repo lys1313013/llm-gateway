@@ -76,6 +76,8 @@ func HandleOpenAI(ctx context.Context, requestData []byte, cfg models.ProxyConfi
 		_ = resp.Body.Close()
 		_ = db.InsertLog(ctx, db.InsertLogInput{
 			Model:          strPtr(modelFromRequest(probe, cfg.Model)),
+			ProviderID:     cfg.ProviderID,
+			ProviderName:   strPtrOrNil(cfg.ProviderName),
 			IsStream:       isStream,
 			StatusCode:     resp.StatusCode,
 			ProcessingTimeMs: int(time.Since(start).Milliseconds()),
@@ -95,14 +97,16 @@ func HandleOpenAI(ctx context.Context, requestData []byte, cfg models.ProxyConfi
 		// Caller is responsible for logging the aggregated stream result
 		// after the stream is fully consumed.
 		streamer := &openaiStreamer{
-			resp:           resp.Body,
-			logResponses:   cfg.LogResponses,
-			targetURL:      cfg.TargetURL,
-			requestData:    requestData,
-			protocol:       cfg.Protocol,
-			start:          start,
-			model:          modelFromRequest(probe, cfg.Model),
-			requestHeaders: cfg.RequestHeaders,
+			resp:            resp.Body,
+			logResponses:    cfg.LogResponses,
+			targetURL:       cfg.TargetURL,
+			requestData:     requestData,
+			protocol:        cfg.Protocol,
+			providerID:      cfg.ProviderID,
+			providerName:    strPtrOrNil(cfg.ProviderName),
+			start:           start,
+			model:           modelFromRequest(probe, cfg.Model),
+			requestHeaders:  cfg.RequestHeaders,
 			responseHeaders: hdrpkg.FromHTTPHeader(resp.Header),
 		}
 		return resp.StatusCode, resp.Header, streamer, true, nil
@@ -129,6 +133,8 @@ func HandleOpenAI(ctx context.Context, requestData []byte, cfg models.ProxyConfi
 
 	_ = db.InsertLog(ctx, db.InsertLogInput{
 		Model:                    strPtr(modelFromRequest(probe, cfg.Model)),
+		ProviderID:               cfg.ProviderID,
+		ProviderName:             strPtrOrNil(cfg.ProviderName),
 		IsStream:                 false,
 		StatusCode:               resp.StatusCode,
 		ProcessingTimeMs:         int(time.Since(start).Milliseconds()),
@@ -158,6 +164,8 @@ type openaiStreamer struct {
 	targetURL       string
 	requestData     []byte
 	protocol        string
+	providerID      *int
+	providerName    *string
 	start           time.Time
 	model           string
 	requestHeaders  map[string]string
@@ -213,6 +221,8 @@ func (s *openaiStreamer) finalize() {
 
 	_ = db.InsertLog(ctx, db.InsertLogInput{
 		Model:                    strPtr(s.model),
+		ProviderID:               s.providerID,
+		ProviderName:             s.providerName,
 		IsStream:                 true,
 		StatusCode:               http.StatusOK,
 		ProcessingTimeMs:         int(time.Since(s.start).Milliseconds()),
@@ -410,6 +420,8 @@ func isTimeoutErr(err error) bool {
 func logProxyError(ctx context.Context, requestData []byte, cfg models.ProxyConfig, start time.Time, status int, msg string) {
 	_ = db.InsertLog(ctx, db.InsertLogInput{
 		Model:            strPtr(cfg.Model),
+		ProviderID:       cfg.ProviderID,
+		ProviderName:     strPtrOrNil(cfg.ProviderName),
 		IsStream:         false,
 		StatusCode:       status,
 		ProcessingTimeMs: int(time.Since(start).Milliseconds()),

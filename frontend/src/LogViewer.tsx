@@ -12,6 +12,8 @@ type LogRecord = {
   created_at: string
   updated_at?: string
   model?: string | null
+  provider_id?: number | null
+  provider_name?: string | null
   is_stream: boolean
   protocol?: string | null
   status_code?: number | null
@@ -129,12 +131,6 @@ const LogViewer = () => {
   const columns: TableColumnsType<LogRecord> = useMemo(
     () => [
       {
-        title: '序号',
-        key: 'index',
-        width: 60,
-        render: (_: unknown, __: LogRecord, index: number) => (currentPage - 1) * PAGE_SIZE + index + 1,
-      },
-      {
         title: '请求时间',
         dataIndex: 'created_at',
         key: 'created_at',
@@ -161,6 +157,13 @@ const LogViewer = () => {
         },
       },
       {
+        title: '供应商',
+        dataIndex: 'provider_name',
+        key: 'provider_name',
+        width: 130,
+        render: (name?: string | null) => name || '-',
+      },
+      {
         title: '模型',
         dataIndex: 'model',
         key: 'model',
@@ -179,7 +182,7 @@ const LogViewer = () => {
         },
       },
       {
-        title: '耗时 (ms)',
+        title: '耗时',
         dataIndex: 'processing_time_ms',
         key: 'processing_time_ms',
         width: 110,
@@ -209,13 +212,6 @@ const LogViewer = () => {
         title: '总 Token',
         dataIndex: 'total_tokens',
         key: 'total_tokens',
-        width: 90,
-        render: (v?: number | null) => v ?? '-',
-      },
-      {
-        title: '缓存创建',
-        dataIndex: 'cache_creation_input_tokens',
-        key: 'cache_creation_input_tokens',
         width: 90,
         render: (v?: number | null) => v ?? '-',
       },
@@ -361,6 +357,9 @@ const LogViewer = () => {
                 <Tag color={currentLog.protocol === 'anthropic' ? 'orange' : 'blue'}>
                   {currentLog.protocol || '-'}
                 </Tag>
+              </Descriptions.Item>
+              <Descriptions.Item label="供应商">
+                {currentLog.provider_name || '-'}
               </Descriptions.Item>
               <Descriptions.Item label="状态码">
                 <Tag color={currentLog.status_code === 200 ? 'success' : 'error'}>

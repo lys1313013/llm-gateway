@@ -65,6 +65,8 @@ func TestChat(c *gin.Context) {
 		LogResponses: route.LogResponses,
 		Model:        strDeref(route.TargetModel, model),
 		Protocol:     "openai",
+		ProviderID:   route.ProviderID,
+		ProviderName: strDeref(route.ProviderName),
 	}
 
 	status, headers, bodyRC, isStream, err := proxy.HandleOpenAI(c.Request.Context(), body, cfg)
@@ -142,6 +144,8 @@ func TestMessages(c *gin.Context) {
 		Model:            strDeref(route.TargetModel, model),
 		Protocol:         "anthropic",
 		AnthropicVersion: "2023-06-01",
+		ProviderID:       route.ProviderID,
+		ProviderName:     strDeref(route.ProviderName),
 	}
 
 	status, headers, bodyRC, isStream, err := proxy.HandleAnthropic(c.Request.Context(), body, cfg)

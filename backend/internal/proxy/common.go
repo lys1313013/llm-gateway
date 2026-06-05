@@ -28,3 +28,12 @@ var streamingTransport = &http.Transport{
 
 func strPtr(s string) *string    { return &s }
 func intPtr(i int) *int          { return &i }
+
+// strPtrOrNil returns nil for empty strings so the DB stores NULL rather
+// than an empty string for "no provider" cases.
+func strPtrOrNil(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
+}
