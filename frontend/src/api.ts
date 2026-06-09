@@ -59,6 +59,7 @@ export async function apiFetch(
 
   if (response.status === 401 && !url.startsWith('/api/test/')) {
     removeToken()
+    window.dispatchEvent(new CustomEvent('auth:expired'))
     window.location.hash = '#/login'
   }
 

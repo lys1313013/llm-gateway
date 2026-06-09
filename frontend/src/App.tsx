@@ -77,6 +77,12 @@ const App = () => {
     return () => window.removeEventListener('hashchange', onHashChange)
   }, [])
 
+  useEffect(() => {
+    const onAuthExpired = () => setAuthed(false)
+    window.addEventListener('auth:expired', onAuthExpired)
+    return () => window.removeEventListener('auth:expired', onAuthExpired)
+  }, [])
+
   // Redirect to login if not authenticated
   useEffect(() => {
     if (!authed && hashPage !== 'login' && hashPage !== 'register') {

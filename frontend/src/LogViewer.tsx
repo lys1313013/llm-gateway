@@ -40,6 +40,8 @@ const LogViewer = () => {
   const [headersModalVisible, setHeadersModalVisible] = useState(false)
   const [filterModel, setFilterModel] = useState('')
   const [filterProtocol, setFilterProtocol] = useState<string | undefined>(undefined)
+  const [filterStatusCode, setFilterStatusCode] = useState<number | undefined>(undefined)
+  const [statusCodeOptions, setStatusCodeOptions] = useState<number[]>([])
   const [total, setTotal] = useState(0)
   const [todayStats, setTodayStats] = useState({ requestCount: 0, promptTokens: 0, completionTokens: 0, totalTokens: 0 })
 
@@ -60,9 +62,21 @@ const LogViewer = () => {
     }
   }
 
+  const fetchStatusCodes = async () => {
+    try {
+      const res = await apiFetch('/api/logs/status_codes')
+      const result = await res.json()
+      if (result.success && Array.isArray(result.data)) {
+        setStatusCodeOptions(result.data as number[])
+      }
+    } catch (e) {
+      console.error('获取状态码列表失败:', e)
+    }
+  }
+
   const PAGE_SIZE = 20
 
-  const fetchLogs = async (page = 1, model?: string, protocol?: string) => {
+  const fetchLogs = async (page = 1, model?: string, protocol?: string, statusCode?: number) => {
     setLoading(true)
     try {
       const params = new URLSearchParams({
@@ -71,6 +85,7 @@ const LogViewer = () => {
       })
       if (model) params.append('model', model)
       if (protocol) params.append('protocol', protocol)
+      if (statusCode) params.append('status_code', String(statusCode))
       const response = await apiFetch(`/api/logs?${params}`)
       const result = await response.json()
       if (result.success) {
@@ -88,28 +103,30 @@ const LogViewer = () => {
   useEffect(() => {
     void fetchLogs()
     void fetchTodayStats()
+    void fetchStatusCodes()
   }, [])
 
   const handlePageChange = (page: number) => {
     setCurrentPage(page)
-    void fetchLogs(page, filterModel || undefined, filterProtocol)
+    void fetchLogs(page, filterModel || undefined, filterProtocol, filterStatusCode)
   }
 
   const handleRefresh = () => {
     setCurrentPage(1)
-    void fetchLogs(1, filterModel || undefined, filterProtocol)
+    void fetchLogs(1, filterModel || undefined, filterProtocol, filterStatusCode)
     void fetchTodayStats()
   }
 
   const handleSearch = () => {
     setCurrentPage(1)
-    void fetchLogs(1, filterModel || undefined, filterProtocol)
+    void fetchLogs(1, filterModel || undefined, filterProtocol, filterStatusCode)
   }
 
   const handleResetFilters = () => {
     setCurrentPage(1)
     setFilterModel('')
     setFilterProtocol(undefined)
+    setFilterStatusCode(undefined)
     void fetchLogs(1)
   }
 
@@ -296,6 +313,14 @@ const LogViewer = () => {
                 { value: 'openai', label: 'OpenAI' },
                 { value: 'anthropic', label: 'Anthropic' },
               ]}
+            />
+            <Select
+              placeholder="状态码"
+              value={filterStatusCode}
+              onChange={v => setFilterStatusCode(v)}
+              allowClear
+              style={{ width: 120 }}
+              options={statusCodeOptions.map(code => ({ value: code, label: String(code) }))}
             />
             <Button type="primary" onClick={handleSearch} loading={loading}>
               搜索

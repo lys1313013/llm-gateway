@@ -71,10 +71,11 @@ func jsonRawOrNil(b []byte) any {
 // ---------------------------------------------------------------------------
 
 type LogListFilter struct {
-	Limit    int
-	Offset   int
-	Model    string
-	Protocol string
+	Limit      int
+	Offset     int
+	Model      string
+	Protocol   string
+	StatusCode int
 }
 
 func GetLogs(ctx context.Context, f LogListFilter) ([]models.APILog, error) {
@@ -113,6 +114,11 @@ func GetLogs(ctx context.Context, f LogListFilter) ([]models.APILog, error) {
 		args = append(args, f.Protocol)
 		idx++
 	}
+	if f.StatusCode > 0 {
+		q += fmt.Sprintf(" AND status_code = $%d", idx)
+		args = append(args, f.StatusCode)
+		idx++
+	}
 	q += fmt.Sprintf(" ORDER BY id DESC LIMIT $%d OFFSET $%d", idx, idx+1)
 	args = append(args, limit, offset)
 
@@ -143,7 +149,7 @@ func GetLogByID(ctx context.Context, id int) (*models.APILog, error) {
 	return l, nil
 }
 
-func GetLogCount(ctx context.Context, model, protocol string) (int, error) {
+func GetLogCount(ctx context.Context, model, protocol string, statusCode int) (int, error) {
 	q := `SELECT COUNT(*) FROM api_logs WHERE 1=1`
 	args := []any{}
 	idx := 1
@@ -155,6 +161,11 @@ func GetLogCount(ctx context.Context, model, protocol string) (int, error) {
 	if protocol != "" {
 		q += fmt.Sprintf(" AND protocol = $%d", idx)
 		args = append(args, protocol)
+		idx++
+	}
+	if statusCode > 0 {
+		q += fmt.Sprintf(" AND status_code = $%d", idx)
+		args = append(args, statusCode)
 		idx++
 	}
 	var n int
@@ -325,6 +336,31 @@ func nullDate(s string) any {
 		return nil
 	}
 	return s
+}
+
+// GetDistinctStatusCodes returns the distinct, non-NULL status codes that
+// appear in api_logs, ordered from most to least frequent so that the most
+// relevant codes show up first in the UI filter.
+func GetDistinctStatusCodes(ctx context.Context) ([]int, error) {
+	rows, err := mustHavePool().Query(ctx, `
+		SELECT status_code
+		FROM api_logs
+		WHERE status_code IS NOT NULL
+		GROUP BY status_code
+		ORDER BY COUNT(*) DESC, status_code ASC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var codes []int
+	for rows.Next() {
+		var c int
+		if err := rows.Scan(&c); err != nil {
+			return nil, err
+		}
+		codes = append(codes, c)
+	}
+	return codes, rows.Err()
 }
 
 // ---------------------------------------------------------------------------

@@ -242,21 +242,23 @@ func ListLogs(c *gin.Context) {
 	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
 	model := c.Query("model")
 	protocol := c.Query("protocol")
+	statusCode, _ := strconv.Atoi(c.Query("status_code"))
 	if model == "" {
 		model = c.Query("model_name") // support both
 	}
 	filter := db.LogListFilter{
-		Limit:    limit,
-		Offset:   offset,
-		Model:    model,
-		Protocol: protocol,
+		Limit:      limit,
+		Offset:     offset,
+		Model:      model,
+		Protocol:   protocol,
+		StatusCode: statusCode,
 	}
 	logs, err := db.GetLogs(c.Request.Context(), filter)
 	if err != nil {
 		serverError(c, err)
 		return
 	}
-	total, _ := db.GetLogCount(c.Request.Context(), filter.Model, filter.Protocol)
+	total, _ := db.GetLogCount(c.Request.Context(), filter.Model, filter.Protocol, filter.StatusCode)
 	c.JSON(http.StatusOK, gin.H{"success": true, "data": logs, "total": total})
 }
 
@@ -273,6 +275,18 @@ func GetLogDetail(c *gin.Context) {
 	}
 	// json.RawMessage already serializes as JSON; pass through.
 	c.JSON(http.StatusOK, gin.H{"success": true, "data": log})
+}
+
+func ListStatusCodes(c *gin.Context) {
+	codes, err := db.GetDistinctStatusCodes(c.Request.Context())
+	if err != nil {
+		serverError(c, err)
+		return
+	}
+	if codes == nil {
+		codes = []int{}
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": codes})
 }
 
 func TodayStats(c *gin.Context) {

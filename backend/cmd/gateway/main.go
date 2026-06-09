@@ -158,6 +158,7 @@ func registerRoutes(r *gin.Engine) {
 	r.GET("/api/logs", handlers.ListLogs)
 	r.GET("/api/logs/:id", handlers.GetLogDetail)
 	r.GET("/api/logs/today_stats", handlers.TodayStats)
+	r.GET("/api/logs/status_codes", handlers.ListStatusCodes)
 	r.GET("/api/stats/daily_tokens", handlers.DailyTokenStats)
 
 	// Admin test endpoints
