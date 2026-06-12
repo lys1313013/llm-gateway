@@ -62,11 +62,11 @@
   {
     "id": "minimax",
     "name": "MiniMax",
-    "description": "MiniMax 开放平台，支持 5 小时和周配额",
+    "description": "",
     "openai_base_url": "https://api.minimaxi.com/v1",
     "anthropic_base_url": "https://api.minimaxi.com/anthropic",
-    "quota_url": "https://api.minimaxi.com/v1/api/openplatform/coding_plan/remains",
+    "quota_url": "https://www.minimaxi.com/v1/api/openplatform/coding_plan/remains",
     "quota_format": "minimax",
-    "remark": "已自动配置 5 小时 + 周配额查询"
+    "remark": ""
   }
 ]
