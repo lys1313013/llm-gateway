@@ -24,6 +24,7 @@ import (
 	"github.com/lys1313013/llm-gateway/backend/internal/db"
 	"github.com/lys1313013/llm-gateway/backend/internal/handlers"
 	"github.com/lys1313013/llm-gateway/backend/internal/middleware"
+	"github.com/lys1313013/llm-gateway/backend/internal/quota"
 )
 
 var version = "dev"
@@ -59,6 +60,11 @@ func main() {
 		os.Exit(1)
 	}
 	defer db.Close()
+
+	// Quota fetcher + background refresher
+	quotaFetcher := quota.NewFetcher()
+	quota.InitGlobal(quotaFetcher)
+	go quotaFetcher.RunRefresher(ctx, 5*time.Minute)
 
 	// Bootstrap: create default admin if no users exist
 	if err := bootstrapAdmin(ctx); err != nil {
@@ -136,10 +142,16 @@ func registerRoutes(r *gin.Engine) {
 
 	// /api/* — admin (JWT auth)
 	r.GET("/api/provider", handlers.ListProviders)
+	r.GET("/api/provider/presets", handlers.ListProviderPresets)
 	r.GET("/api/provider/:id", handlers.GetProvider)
 	r.POST("/api/provider", handlers.CreateProvider)
 	r.PUT("/api/provider/:id", handlers.UpdateProvider)
 	r.DELETE("/api/provider/:id", handlers.DeleteProvider)
+
+	// Quota
+	r.GET("/api/provider/quota", handlers.ListProviderQuotas)
+	r.GET("/api/provider/:id/quota", handlers.GetProviderQuota)
+	r.POST("/api/provider/:id/quota/refresh", handlers.RefreshProviderQuota)
 
 	r.GET("/api/route", handlers.ListRoutes)
 	r.GET("/api/route/:id", handlers.GetRoute)
@@ -164,6 +176,11 @@ func registerRoutes(r *gin.Engine) {
 	// Admin test endpoints
 	r.POST("/api/test/chat", handlers.TestChat)
 	r.POST("/api/test/messages", handlers.TestMessages)
+
+	// Provider self-test — verify connectivity without persisting the
+	// provider. Auto-detects configured protocol(s) and runs a full
+	// list-and-chat cycle. Used by the "新增产商" form.
+	r.POST("/api/provider/test/connect", handlers.ProviderConnect)
 }
 
 // bootstrapAdmin creates an `admin` user with the default password if the

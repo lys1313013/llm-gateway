@@ -23,6 +23,7 @@ FROM gcr.io/distroless/static-debian12:nonroot
 
 WORKDIR /app
 COPY --from=build /out/gateway /app/gateway
+COPY config/provider_presets.json /app/config/provider_presets.json
 
 USER nonroot:nonroot
 EXPOSE 5001

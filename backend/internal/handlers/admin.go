@@ -11,7 +11,9 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/lys1313013/llm-gateway/backend/internal/config"
 	"github.com/lys1313013/llm-gateway/backend/internal/db"
+	"github.com/lys1313013/llm-gateway/backend/internal/quota"
 )
 
 // ---------------------------------------------------------------------------
@@ -75,6 +77,20 @@ func DeleteProvider(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true})
+}
+
+// ListProviderPresets returns the preset catalog used to pre-fill the
+// new-provider form. Order matches the file. An empty list is a valid
+// response — the UI just hides the preset selector.
+func ListProviderPresets(c *gin.Context) {
+	presets, err := config.LoadPresets()
+	if err != nil {
+		// A missing file is non-fatal: the UI just won't offer presets.
+		slog.Warn("presets unavailable", "err", err)
+		ok(c, []any{})
+		return
+	}
+	ok(c, presets)
 }
 
 // ---------------------------------------------------------------------------
@@ -231,6 +247,80 @@ func UpdateExposedModelTestTime(c *gin.Context) {
 		return
 	}
 	ok(c, m)
+}
+
+// ---------------------------------------------------------------------------
+// Quota
+// ---------------------------------------------------------------------------
+
+// ListProviderQuotas returns the cached quota snapshot for every provider.
+// The frontend uses this for the top-of-page overview card.
+func ListProviderQuotas(c *gin.Context) {
+	providers, err := db.GetProviders(c.Request.Context())
+	if err != nil {
+		serverError(c, err)
+		return
+	}
+	cache := quota.Global().Cache
+	out := make([]gin.H, 0, len(providers))
+	for _, p := range providers {
+		snap, ok := cache.Get(p.ID)
+		out = append(out, gin.H{
+			"provider_id":   p.ID,
+			"provider_name": p.Name,
+			"has_config":    p.QuotaURL != nil && *p.QuotaURL != "",
+			"snapshot":      snap,
+			"present":       ok,
+		})
+	}
+	ok(c, out)
+}
+
+// GetProviderQuota returns the cached snapshot for a single provider.
+func GetProviderQuota(c *gin.Context) {
+	id, _ := strconv.Atoi(c.Param("id"))
+	snap, cached := quota.Global().Cache.Get(id)
+	if !cached {
+		c.JSON(http.StatusNotFound, gin.H{
+			"success": false,
+			"message": "no quota snapshot cached for this provider",
+		})
+		return
+	}
+	ok(c, gin.H{"provider_id": id, "snapshot": snap, "present": true})
+}
+
+// RefreshProviderQuota synchronously re-fetches quota for a single provider
+// and updates the cache. Uses the request context so the client can cancel.
+func RefreshProviderQuota(c *gin.Context) {
+	id, _ := strconv.Atoi(c.Param("id"))
+	p, err := db.GetProvider(c.Request.Context(), id)
+	if err != nil {
+		serverError(c, err)
+		return
+	}
+	if p == nil {
+		notFound(c, "provider not found")
+		return
+	}
+	if p.QuotaURL == nil || *p.QuotaURL == "" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"message": "provider has no quota_url configured",
+		})
+		return
+	}
+	quota.Global().RefreshOne(c.Request.Context(), *p)
+	snap, _ := quota.Global().Cache.Get(id)
+	if snap.LastError != "" {
+		c.JSON(http.StatusBadGateway, gin.H{
+			"success":  false,
+			"message":  snap.LastError,
+			"snapshot": snap,
+		})
+		return
+	}
+	ok(c, gin.H{"provider_id": id, "snapshot": snap, "present": true})
 }
 
 // ---------------------------------------------------------------------------

@@ -1,0 +1,72 @@
+[
+  {
+    "id": "openai",
+    "name": "OpenAI",
+    "description": "OpenAI 官方 (api.openai.com)",
+    "openai_base_url": "https://api.openai.com/v1",
+    "anthropic_base_url": "",
+    "quota_url": "",
+    "quota_format": "",
+    "remark": "官方 OpenAI，无需配额查询"
+  },
+  {
+    "id": "anthropic",
+    "name": "Anthropic",
+    "description": "Anthropic 官方 (api.anthropic.com)",
+    "openai_base_url": "",
+    "anthropic_base_url": "https://api.anthropic.com",
+    "quota_url": "",
+    "quota_format": "",
+    "remark": "官方 Anthropic"
+  },
+  {
+    "id": "azure_openai",
+    "name": "Azure OpenAI",
+    "description": "微软 Azure OpenAI 服务",
+    "openai_base_url": "https://{your-resource}.openai.azure.com/openai/deployments/{your-deployment}",
+    "anthropic_base_url": "",
+    "quota_url": "",
+    "quota_format": "",
+    "remark": "请将 {your-resource} 和 {your-deployment} 替换为实际值"
+  },
+  {
+    "id": "deepseek",
+    "name": "DeepSeek",
+    "description": "DeepSeek 官方 (api.deepseek.com)",
+    "openai_base_url": "https://api.deepseek.com",
+    "anthropic_base_url": "",
+    "quota_url": "https://api.deepseek.com/user/balance",
+    "quota_format": "deepseek",
+    "remark": "支持账户余额查询"
+  },
+  {
+    "id": "dashscope",
+    "name": "阿里云百炼 (DashScope)",
+    "description": "阿里云百炼 OpenAI/Anthropic 兼容模式",
+    "openai_base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    "anthropic_base_url": "https://dashscope.aliyuncs.com/apps/anthropic",
+    "quota_url": "",
+    "quota_format": "",
+    "remark": "两种协议同时支持"
+  },
+  {
+    "id": "siliconflow",
+    "name": "硅基流动 (SiliconFlow)",
+    "description": "SiliconFlow OpenAI/Anthropic 兼容",
+    "openai_base_url": "https://api.siliconflow.cn/v1",
+    "anthropic_base_url": "https://api.siliconflow.cn/anthropic",
+    "quota_url": "",
+    "quota_format": "",
+    "remark": ""
+  },
+  {
+    "id": "minimax",
+    "name": "MiniMax",
+    "description": "MiniMax 开放平台，支持 5 小时和周配额",
+    "openai_base_url": "https://api.minimaxi.com/v1",
+    "anthropic_base_url": "https://api.minimaxi.com/anthropic",
+    "quota_url": "https://api.minimaxi.com/v1/api/openplatform/coding_plan/remains",
+    "quota_format": "minimax",
+    "remark": "已自动配置 5 小时 + 周配额查询"
+  }
+]
