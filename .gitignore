@@ -1,6 +1,12 @@
 # Environment variables
 .env
 .env.local
+*.env.bak.*
+*.env.*.bak
+
+# Local debug / scratch artifacts
+minimax_token.html
+
 
 # IDEs and Editors
 .idea/
