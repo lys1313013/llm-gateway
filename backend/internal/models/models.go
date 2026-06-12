@@ -16,6 +16,8 @@ type Provider struct {
 	AnthropicBaseURL *string   `json:"anthropic_base_url,omitempty"`
 	APIKey           *string   `json:"api_key,omitempty"`
 	Remark           *string   `json:"remark,omitempty"`
+	QuotaURL         *string   `json:"quota_url,omitempty"`
+	QuotaFormat      *string   `json:"quota_format,omitempty"`
 	CreateTime       time.Time `json:"create_time"`
 	UpdateTime       time.Time `json:"update_time"`
 }

@@ -16,7 +16,7 @@ var ErrNotFound = errors.New("not found")
 // Provider
 // ---------------------------------------------------------------------------
 
-const providerSelectCols = `id, name, openai_base_url, anthropic_base_url, api_key, remark, create_time, update_time`
+const providerSelectCols = `id, name, openai_base_url, anthropic_base_url, api_key, remark, quota_url, quota_format, create_time, update_time`
 
 func GetProviders(ctx context.Context) ([]models.Provider, error) {
 	rows, err := mustHavePool().Query(ctx,
@@ -47,14 +47,16 @@ type CreateProviderInput struct {
 	AnthropicBaseURL *string `json:"anthropic_base_url,omitempty"`
 	APIKey           *string `json:"api_key,omitempty"`
 	Remark           *string `json:"remark,omitempty"`
+	QuotaURL         *string `json:"quota_url,omitempty"`
+	QuotaFormat      *string `json:"quota_format,omitempty"`
 }
 
 func CreateProvider(ctx context.Context, in CreateProviderInput) (*models.Provider, error) {
 	row := mustHavePool().QueryRow(ctx, `
-		INSERT INTO provider (name, openai_base_url, anthropic_base_url, api_key, remark)
-		VALUES ($1, $2, $3, $4, $5)
+		INSERT INTO provider (name, openai_base_url, anthropic_base_url, api_key, remark, quota_url, quota_format)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
 		RETURNING `+providerSelectCols,
-		in.Name, in.OpenAIBaseURL, in.AnthropicBaseURL, in.APIKey, in.Remark)
+		in.Name, in.OpenAIBaseURL, in.AnthropicBaseURL, in.APIKey, in.Remark, in.QuotaURL, in.QuotaFormat)
 	return scanProvider(row)
 }
 
@@ -64,6 +66,8 @@ type UpdateProviderInput struct {
 	AnthropicBaseURL *string `json:"anthropic_base_url,omitempty"`
 	APIKey           *string `json:"api_key,omitempty"`
 	Remark           *string `json:"remark,omitempty"`
+	QuotaURL         *string `json:"quota_url,omitempty"`
+	QuotaFormat      *string `json:"quota_format,omitempty"`
 }
 
 func UpdateProvider(ctx context.Context, id int, in UpdateProviderInput) (*models.Provider, error) {
@@ -74,10 +78,12 @@ func UpdateProvider(ctx context.Context, id int, in UpdateProviderInput) (*model
 		       anthropic_base_url = $4,
 		       api_key = $5,
 		       remark = $6,
+		       quota_url = $7,
+		       quota_format = $8,
 		       update_time = CURRENT_TIMESTAMP
 		 WHERE id = $1
 		RETURNING `+providerSelectCols,
-		id, in.Name, in.OpenAIBaseURL, in.AnthropicBaseURL, in.APIKey, in.Remark)
+		id, in.Name, in.OpenAIBaseURL, in.AnthropicBaseURL, in.APIKey, in.Remark, in.QuotaURL, in.QuotaFormat)
 	p, err := scanProvider(row)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
@@ -110,7 +116,7 @@ type rowScanner interface {
 func scanProvider(row rowScanner) (*models.Provider, error) {
 	var p models.Provider
 	err := row.Scan(&p.ID, &p.Name, &p.OpenAIBaseURL, &p.AnthropicBaseURL,
-		&p.APIKey, &p.Remark, &p.CreateTime, &p.UpdateTime)
+		&p.APIKey, &p.Remark, &p.QuotaURL, &p.QuotaFormat, &p.CreateTime, &p.UpdateTime)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
@@ -130,7 +136,7 @@ func scanProviders(rows interface {
 	for rows.Next() {
 		var p models.Provider
 		if err := rows.Scan(&p.ID, &p.Name, &p.OpenAIBaseURL, &p.AnthropicBaseURL,
-			&p.APIKey, &p.Remark, &p.CreateTime, &p.UpdateTime); err != nil {
+			&p.APIKey, &p.Remark, &p.QuotaURL, &p.QuotaFormat, &p.CreateTime, &p.UpdateTime); err != nil {
 			return nil, fmt.Errorf("scan providers: %w", err)
 		}
 		out = append(out, p)

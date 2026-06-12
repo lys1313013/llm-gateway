@@ -67,6 +67,18 @@ func Close() {
 
 func initSchema(ctx context.Context) error {
 	ddl := []string{
+		`CREATE TABLE IF NOT EXISTS provider (
+			id SERIAL PRIMARY KEY,
+			name VARCHAR(100) UNIQUE NOT NULL,
+			openai_base_url VARCHAR(255),
+			anthropic_base_url VARCHAR(255),
+			api_key VARCHAR(255),
+			remark TEXT,
+			quota_url VARCHAR(255),
+			quota_format VARCHAR(32),
+			create_time TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+			update_time TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+		)`,
 		`CREATE TABLE IF NOT EXISTS api_logs (
 			id SERIAL PRIMARY KEY,
 			created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
@@ -90,16 +102,6 @@ func initSchema(ctx context.Context) error {
 			usage_data JSONB,
 			cache_creation_input_tokens INTEGER,
 			cache_read_input_tokens INTEGER
-		)`,
-		`CREATE TABLE IF NOT EXISTS provider (
-			id SERIAL PRIMARY KEY,
-			name VARCHAR(100) UNIQUE NOT NULL,
-			openai_base_url VARCHAR(255),
-			anthropic_base_url VARCHAR(255),
-			api_key VARCHAR(255),
-			remark TEXT,
-			create_time TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-			update_time TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 		)`,
 		`CREATE TABLE IF NOT EXISTS model_route (
 			id SERIAL PRIMARY KEY,
@@ -164,6 +166,8 @@ func initSchema(ctx context.Context) error {
 		`ALTER TABLE api_logs ADD COLUMN IF NOT EXISTS provider_name VARCHAR(100)`,
 		`ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS key_value VARCHAR(255)`,
 		`ALTER TABLE model_route ALTER COLUMN timeout SET DEFAULT -1`,
+		`ALTER TABLE provider ADD COLUMN IF NOT EXISTS quota_url VARCHAR(255)`,
+		`ALTER TABLE provider ADD COLUMN IF NOT EXISTS quota_format VARCHAR(32)`,
 	}
 	for _, sql := range backfills {
 		if _, err := Pool.Exec(ctx, sql); err != nil {
