@@ -101,7 +101,8 @@ func initSchema(ctx context.Context) error {
 			protocol VARCHAR(50),
 			usage_data JSONB,
 			cache_creation_input_tokens INTEGER,
-			cache_read_input_tokens INTEGER
+			cache_read_input_tokens INTEGER,
+			session_id VARCHAR(128)
 		)`,
 		`CREATE TABLE IF NOT EXISTS model_route (
 			id SERIAL PRIMARY KEY,
@@ -168,10 +169,23 @@ func initSchema(ctx context.Context) error {
 		`ALTER TABLE model_route ALTER COLUMN timeout SET DEFAULT -1`,
 		`ALTER TABLE provider ADD COLUMN IF NOT EXISTS quota_url VARCHAR(255)`,
 		`ALTER TABLE provider ADD COLUMN IF NOT EXISTS quota_format VARCHAR(32)`,
+		`ALTER TABLE api_logs ADD COLUMN IF NOT EXISTS session_id VARCHAR(128)`,
 	}
 	for _, sql := range backfills {
 		if _, err := Pool.Exec(ctx, sql); err != nil {
 			return fmt.Errorf("backfill: %w (sql=%s)", err, sql)
+		}
+	}
+
+	// Indexes that depend on backfilled columns. Kept separate so the
+	// CREATE TABLE IF NOT EXISTS path doesn't fail when a legacy schema
+	// is missing the column.
+	indexes := []string{
+		`CREATE INDEX IF NOT EXISTS idx_api_logs_session_id ON api_logs(session_id) WHERE session_id IS NOT NULL`,
+	}
+	for _, sql := range indexes {
+		if _, err := Pool.Exec(ctx, sql); err != nil {
+			return fmt.Errorf("index: %w (sql=%s)", err, sql)
 		}
 	}
 
