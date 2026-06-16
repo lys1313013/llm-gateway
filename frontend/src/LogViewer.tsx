@@ -4,6 +4,7 @@ import type { TableColumnsType } from 'antd'
 import { ClusterOutlined } from '@ant-design/icons'
 import dayjs from 'dayjs'
 import JsonViewer from './JsonViewer'
+import ConversationPreview from './ConversationPreview'
 import { apiFetch } from './api'
 
 const { Title, Text } = Typography
@@ -399,7 +400,7 @@ const LogViewer = () => {
         open={modalVisible}
         onCancel={() => setModalVisible(false)}
         footer={null}
-        width="min(82vw, 1380px)"
+        width="min(96vw, 1720px)"
         style={{ top: 12 }}
         styles={{
           body: {
@@ -466,8 +467,23 @@ const LogViewer = () => {
                 flexWrap: 'wrap',
               }}
             >
-              <JsonViewer title="Request Data" value={currentLog.request_data} height="70vh" />
-              <JsonViewer title="Response Data" value={currentLog.response_data} height="70vh" />
+              <JsonViewer
+                title="Request Data"
+                value={currentLog.request_data}
+                height="70vh"
+                style={{ flex: '1 1 360px', minWidth: 320 }}
+              />
+              <JsonViewer
+                title="Response Data"
+                value={currentLog.response_data}
+                height="70vh"
+                style={{ flex: '1 1 360px', minWidth: 320 }}
+              />
+              <ConversationPreview
+                requestData={currentLog.request_data}
+                responseData={currentLog.response_data}
+                protocol={currentLog.protocol}
+              />
             </div>
           </div>
         )}

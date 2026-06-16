@@ -7,6 +7,7 @@ type JsonViewerProps = {
   title: string
   value: unknown
   height?: number | string
+  style?: React.CSSProperties
 }
 
 type ParsedContent = {
@@ -65,11 +66,11 @@ function parseViewerContent(value: unknown): ParsedContent {
   }
 }
 
-function JsonViewer({ title, value, height = '70vh' }: JsonViewerProps) {
+function JsonViewer({ title, value, height = '70vh', style }: JsonViewerProps) {
   const viewerContent = parseViewerContent(value)
 
   return (
-    <div style={{ flex: '1 1 520px', minWidth: 420 }}>
+    <div style={{ flex: '1 1 520px', minWidth: 420, ...style }}>
       <div
         style={{
           marginBottom: 8,
