@@ -33,6 +33,7 @@ type InsertLogInput struct {
 	ErrorMessage           *string
 	Protocol               *string
 	UsageData              []byte // JSON
+	SessionID              *string
 }
 
 func InsertLog(ctx context.Context, in InsertLogInput) error {
@@ -44,9 +45,10 @@ func InsertLog(ctx context.Context, in InsertLogInput) error {
 			cache_creation_input_tokens, cache_read_input_tokens,
 			target_url, request_data, response_data,
 			request_headers, response_headers,
-			error_message, protocol, usage_data
+			error_message, protocol, usage_data,
+			session_id
 		) VALUES (
-			$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19
+			$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20
 		)`,
 		in.Model, in.ProviderID, in.ProviderName,
 		in.IsStream, in.StatusCode, in.ProcessingTimeMs,
@@ -55,6 +57,7 @@ func InsertLog(ctx context.Context, in InsertLogInput) error {
 		in.TargetURL, jsonRawOrNil(in.RequestData), jsonRawOrNil(in.ResponseData),
 		jsonRawOrNil(in.RequestHeaders), jsonRawOrNil(in.ResponseHeaders),
 		in.ErrorMessage, in.Protocol, jsonRawOrNil(in.UsageData),
+		in.SessionID,
 	)
 	return err
 }
@@ -100,7 +103,8 @@ func GetLogs(ctx context.Context, f LogListFilter) ([]models.APILog, error) {
 	             processing_time_ms, prompt_tokens, completion_tokens, total_tokens,
 	             target_url,
 	             error_message, protocol,
-	             usage_data, cache_creation_input_tokens, cache_read_input_tokens
+	             usage_data, cache_creation_input_tokens, cache_read_input_tokens,
+	             session_id
 	      FROM api_logs WHERE 1=1`
 	args := []any{}
 	idx := 1
@@ -137,7 +141,8 @@ func GetLogByID(ctx context.Context, id int) (*models.APILog, error) {
 	             target_url, request_data, response_data,
 	             request_headers, response_headers,
 	             error_message, protocol,
-	             usage_data, cache_creation_input_tokens, cache_read_input_tokens
+	             usage_data, cache_creation_input_tokens, cache_read_input_tokens,
+	             session_id
 	         FROM api_logs WHERE id = $1`, id)
 	l, err := scanLog(row)
 	if err != nil {
@@ -377,6 +382,7 @@ func scanLog(row rowScanner) (*models.APILog, error) {
 		&l.RequestHeaders, &l.ResponseHeaders,
 		&l.ErrorMessage, &l.Protocol,
 		&l.UsageData, &l.CacheCreationInputTokens, &l.CacheReadInputTokens,
+		&l.SessionID,
 	)
 	if err != nil {
 		return nil, err
@@ -400,6 +406,7 @@ func scanLogs(rows interface {
 			&l.TargetURL,
 			&l.ErrorMessage, &l.Protocol,
 			&l.UsageData, &l.CacheCreationInputTokens, &l.CacheReadInputTokens,
+			&l.SessionID,
 		); err != nil {
 			return nil, err
 		}

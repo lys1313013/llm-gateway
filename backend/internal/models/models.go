@@ -99,6 +99,7 @@ type APILog struct {
 	UsageData              json.RawMessage `json:"usage_data,omitempty"`
 	CacheCreationInputTokens *int          `json:"cache_creation_input_tokens,omitempty"`
 	CacheReadInputTokens   *int            `json:"cache_read_input_tokens,omitempty"`
+	SessionID              *string         `json:"session_id,omitempty"`
 }
 
 // ---------------------------------------------------------------------------
@@ -119,6 +120,10 @@ type ProxyConfig struct {
 	// RequestHeaders is the sanitized incoming request header map (auth
 	// headers removed). Stored in api_logs.request_headers.
 	RequestHeaders map[string]string
+	// SessionID is the value of the X-Claude-Code-Session-Id request
+	// header, or empty when the client did not provide one. Stored in
+	// api_logs.session_id so requests can be grouped per conversation.
+	SessionID string
 	// IfEmpty is used by some callers as a fallback for AnthropicVersion.
 	// Kept for parity with the Python ProxyConfig; the handler fills it in.
 	IfEmpty string `json:"-"`

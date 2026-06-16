@@ -91,6 +91,7 @@ func ChatCompletions(c *gin.Context) {
 		ProviderID:     route.ProviderID,
 		ProviderName:   strDeref(route.ProviderName),
 		RequestHeaders: hdrpkg.FromMap(collectHeaders(c.Request.Header)),
+		SessionID:      c.GetHeader("X-Claude-Code-Session-Id"),
 	}
 
 	status, headers, bodyRC, isStream, err := proxy.HandleOpenAI(c.Request.Context(), body, cfg)
@@ -261,6 +262,7 @@ func AnthropicMessages(c *gin.Context) {
 		ProviderID:       route.ProviderID,
 		ProviderName:     strDeref(route.ProviderName),
 		RequestHeaders:   hdrpkg.FromMap(collectHeaders(c.Request.Header)),
+		SessionID:        c.GetHeader("X-Claude-Code-Session-Id"),
 	}
 
 	status, headers, bodyRC, isStream, err := proxy.HandleAnthropic(c.Request.Context(), body, cfg)
