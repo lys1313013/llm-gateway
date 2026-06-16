@@ -10,6 +10,7 @@ import {
   UserOutlined,
   LogoutOutlined,
   LockOutlined,
+  ClusterOutlined,
 } from '@ant-design/icons'
 import TokenStats from './TokenStats'
 import ConfigProvider from './ConfigProvider'
@@ -20,6 +21,8 @@ import ApiKeys from './ApiKeys'
 import Login from './Login'
 import Register from './Register'
 import ChangePassword from './ChangePassword'
+import Sessions from './Sessions'
+import SessionDetail from './SessionDetail'
 import { isAuthenticated, removeToken, getCurrentUser } from './api'
 
 const { Content } = Layout
@@ -27,6 +30,7 @@ const { Title } = Typography
 
 const ALL_KEYS = [
   'logs',
+  'sessions',
   'stats',
   'provider',
   'route',
@@ -38,12 +42,17 @@ type PageKey = (typeof ALL_KEYS)[number]
 const AUTH_PAGES = ['login', 'register'] as const
 type AuthPage = (typeof AUTH_PAGES)[number]
 
-function getHashPage(): PageKey | AuthPage | string {
-  return window.location.hash.replace(/^#\/?/, '')
+type HashRoute = { page: PageKey | AuthPage | null; id?: string }
+
+function getHashRoute(): HashRoute {
+  const raw = window.location.hash.replace(/^#\/?/, '')
+  const [page, ...rest] = raw.split('/')
+  return { page: (page || null) as HashRoute['page'], id: rest.length ? rest.join('/') : undefined }
 }
 
 const menuItems = [
   { key: 'logs', icon: <FileTextOutlined />, label: '请求日志' },
+  { key: 'sessions', icon: <ClusterOutlined />, label: '会话视图' },
   { key: 'stats', icon: <BarChartOutlined />, label: 'Token 统计' },
   { key: 'provider', icon: <ApiOutlined />, label: '大模型产商' },
   { key: 'route', icon: <NodeIndexOutlined />, label: '模型路由' },
@@ -53,6 +62,7 @@ const menuItems = [
 
 const contentMap: Record<PageKey, React.ReactNode> = {
   logs: <LogViewer />,
+  sessions: <Sessions />,
   stats: <TokenStats />,
   provider: <ConfigProvider />,
   route: <ConfigRoute />,
@@ -62,13 +72,14 @@ const contentMap: Record<PageKey, React.ReactNode> = {
 
 const App = () => {
   const [authed, setAuthed] = useState(() => isAuthenticated())
-  const [hashPage, setHashPage] = useState(() => getHashPage())
+  const [hashRoute, setHashRoute] = useState<HashRoute>(() => getHashRoute())
 
   useEffect(() => {
     const onHashChange = () => {
-      const page = getHashPage()
-      setHashPage(page)
+      const route = getHashRoute()
+      setHashRoute(route)
       // Re-check auth on navigation
+      const page = route.page
       if (!isAuthenticated() && page !== 'login' && page !== 'register') {
         window.location.hash = '#/login'
       }
@@ -85,10 +96,11 @@ const App = () => {
 
   // Redirect to login if not authenticated
   useEffect(() => {
-    if (!authed && hashPage !== 'login' && hashPage !== 'register') {
+    const page = hashRoute.page
+    if (!authed && page !== 'login' && page !== 'register') {
       window.location.hash = '#/login'
     }
-  }, [authed, hashPage])
+  }, [authed, hashRoute])
 
   const handleLogin = useCallback(() => {
     setAuthed(true)
@@ -107,13 +119,15 @@ const App = () => {
 
   // Show login/register pages without sidebar
   if (!authed) {
-    if (hashPage === 'register') {
+    if (hashRoute.page === 'register') {
       return <Register onRegister={handleLogin} />
     }
     return <Login onLogin={handleLogin} />
   }
 
-  const activeKey = (ALL_KEYS.includes(hashPage as PageKey) ? hashPage : 'logs') as PageKey
+  const page = hashRoute.page
+  const isSessionDetail = page === 'sessions' && hashRoute.id
+  const activeKey = (ALL_KEYS.includes(page as PageKey) ? page : 'logs') as PageKey
   const handleMenuClick = ({ key }: { key: string }) => {
     window.location.hash = `#/${key}`
   }
@@ -187,7 +201,7 @@ const App = () => {
       </div>
       <Layout style={{ marginLeft: 200 }}>
         <Content style={{ padding: 24, background: '#f0f2f5', minHeight: '100vh' }}>
-          {contentMap[activeKey]}
+          {isSessionDetail ? <SessionDetail sessionId={hashRoute.id!} /> : contentMap[activeKey]}
         </Content>
       </Layout>
       <ChangePassword
