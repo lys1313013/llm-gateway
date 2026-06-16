@@ -111,6 +111,9 @@ func registerTestRoutes(r *gin.Engine) {
 	r.GET("/api/logs/today_stats", handlers.TodayStats)
 	r.GET("/api/stats/daily_tokens", handlers.DailyTokenStats)
 
+	r.GET("/api/sessions", handlers.ListSessions)
+	r.GET("/api/sessions/:id", handlers.GetSession)
+
 	r.POST("/api/test/chat", handlers.TestChat)
 	r.POST("/api/test/messages", handlers.TestMessages)
 }
@@ -284,6 +287,148 @@ func TestLogs_AndStats(t *testing.T) {
 		t.Fatalf("daily_tokens: %d", w.Code)
 	}
 }
+
+// TestSessions_Smoke exercises the new session endpoints end-to-end:
+//  1. seed three logs with two distinct session IDs and one without
+//  2. GET /api/sessions?q=... filters by prefix
+//  3. GET /api/sessions/:id returns meta + logs in ASC order
+//  4. GET /api/sessions (no filter) returns at least 2 rows
+func TestSessions_Smoke(t *testing.T) {
+	r := setupRouter(t)
+	suffix := time.Now().UnixNano()
+	w, body := doJSON(t, r, "POST", "/api/auth/register", map[string]string{
+		"username": fmt.Sprintf("gtest_sess_%d", suffix),
+		"password": "test_pw_1234",
+	}, nil)
+	if w.Code != 201 {
+		t.Fatalf("register: %d", w.Code)
+	}
+	token, _ := body["data"].(map[string]any)["token"].(string)
+	auth := map[string]string{"Authorization": "Bearer " + token}
+
+	sessA := fmt.Sprintf("sess-A-%d", suffix)
+	sessB := fmt.Sprintf("sess-B-%d", suffix)
+
+	ctx := context.Background()
+
+	// Three logs for sessA, two for sessB, one with NULL session_id.
+	for i := 0; i < 3; i++ {
+		if err := db.InsertLog(ctx, db.InsertLogInput{
+			Model:          strPtrLocal("gpt-4o-mini"),
+			IsStream:       false,
+			StatusCode:     200,
+			ProcessingTimeMs: 100 + i,
+			PromptTokens:   intPtrLocal(10 + i),
+			CompletionTokens: intPtrLocal(20 + i),
+			TotalTokens:    intPtrLocal(30 + 2*i),
+			Protocol:       strPtrLocal("openai"),
+			SessionID:      strPtrOrNilLocal(sessA),
+		}); err != nil {
+			t.Fatalf("insert sessA[%d]: %v", i, err)
+		}
+	}
+	for i := 0; i < 2; i++ {
+		if err := db.InsertLog(ctx, db.InsertLogInput{
+			Model:          strPtrLocal("claude-haiku-4-5"),
+			IsStream:       true,
+			StatusCode:     200,
+			ProcessingTimeMs: 200 + i,
+			PromptTokens:   intPtrLocal(5),
+			CompletionTokens: intPtrLocal(10),
+			TotalTokens:    intPtrLocal(15),
+			Protocol:       strPtrLocal("anthropic"),
+			SessionID:      strPtrOrNilLocal(sessB),
+		}); err != nil {
+			t.Fatalf("insert sessB[%d]: %v", i, err)
+		}
+	}
+	// No session — should not appear in the list
+	if err := db.InsertLog(ctx, db.InsertLogInput{
+		Model:        strPtrLocal("gpt-4o-mini"),
+		IsStream:     false,
+		StatusCode:   200,
+		Protocol:     strPtrLocal("openai"),
+	}); err != nil {
+		t.Fatalf("insert nosess: %v", err)
+	}
+
+	// 1. List with q=sess-A filter
+	w, lbody := doJSON(t, r, "GET", "/api/sessions?q=sess-A-"+fmt.Sprint(suffix), nil, auth)
+	if w.Code != 200 {
+		t.Fatalf("list sessions: %d: %s", w.Code, w.Body.String())
+	}
+	data, _ := lbody["data"].([]any)
+	if len(data) != 1 {
+		t.Fatalf("expected 1 session for sessA, got %d", len(data))
+	}
+	row := data[0].(map[string]any)
+	if row["session_id"] != sessA {
+		t.Fatalf("sessA row id mismatch: %v", row["session_id"])
+	}
+	if int(row["request_count"].(float64)) != 3 {
+		t.Fatalf("sessA request_count: want 3, got %v", row["request_count"])
+	}
+	if int(row["total_tokens"].(float64)) != 30+32+34 {
+		t.Fatalf("sessA total_tokens: want 96, got %v", row["total_tokens"])
+	}
+	models, _ := row["models"].([]any)
+	if len(models) != 1 || models[0] != "gpt-4o-mini" {
+		t.Fatalf("sessA models: want [gpt-4o-mini], got %v", models)
+	}
+
+	// 2. List all sessions — should include at least sessA and sessB
+	w, lbody = doJSON(t, r, "GET", "/api/sessions?limit=100", nil, auth)
+	if w.Code != 200 {
+		t.Fatalf("list all sessions: %d", w.Code)
+	}
+	all, _ := lbody["data"].([]any)
+	foundA, foundB := false, false
+	for _, r := range all {
+		m := r.(map[string]any)
+		if m["session_id"] == sessA {
+			foundA = true
+		}
+		if m["session_id"] == sessB {
+			foundB = true
+		}
+	}
+	if !foundA || !foundB {
+		t.Fatalf("expected both sessA and sessB in list, got foundA=%v foundB=%v", foundA, foundB)
+	}
+
+	// 3. Detail: sessA
+	w, dbody := doJSON(t, r, "GET", "/api/sessions/"+sessA, nil, auth)
+	if w.Code != 200 {
+		t.Fatalf("get sessA: %d: %s", w.Code, w.Body.String())
+	}
+	logs, _ := dbody["data"].([]any)
+	if len(logs) != 3 {
+		t.Fatalf("sessA logs: want 3, got %d", len(logs))
+	}
+	// Confirm ASC by id
+	firstID := int(logs[0].(map[string]any)["id"].(float64))
+	lastID := int(logs[len(logs)-1].(map[string]any)["id"].(float64))
+	if firstID >= lastID {
+		t.Fatalf("logs not in ASC order: %d >= %d", firstID, lastID)
+	}
+	meta, _ := dbody["meta"].(map[string]any)
+	if int(meta["request_count"].(float64)) != 3 {
+		t.Fatalf("sessA meta request_count: %v", meta["request_count"])
+	}
+
+	// 4. Detail: nonexistent session
+	w, _ = doJSON(t, r, "GET", "/api/sessions/does-not-exist-"+fmt.Sprint(suffix), nil, auth)
+	if w.Code != 404 {
+		t.Fatalf("expected 404 for missing session, got %d", w.Code)
+	}
+}
+
+// local helpers — kept private to the test file so they don't pollute the
+// proxy/db package. Mirror the strPtr/intPtr/strPtrOrNil helpers used by
+// the production InsertLogInput call sites.
+func strPtrLocal(s string) *string       { return &s }
+func strPtrOrNilLocal(s string) *string  { if s == "" { return nil }; return &s }
+func intPtrLocal(n int) *int             { return &n }
 
 // TestConcurrentLoad fires N parallel /api/logs requests to demonstrate
 // that the Go server handles concurrency cleanly.

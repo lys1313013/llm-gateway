@@ -173,6 +173,10 @@ func registerRoutes(r *gin.Engine) {
 	r.GET("/api/logs/status_codes", handlers.ListStatusCodes)
 	r.GET("/api/stats/daily_tokens", handlers.DailyTokenStats)
 
+	// Sessions — group api_logs by X-Claude-Code-Session-Id header
+	r.GET("/api/sessions", handlers.ListSessions)
+	r.GET("/api/sessions/:id", handlers.GetSession)
+
 	// Admin test endpoints
 	r.POST("/api/test/chat", handlers.TestChat)
 	r.POST("/api/test/messages", handlers.TestMessages)

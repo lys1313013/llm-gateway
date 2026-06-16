@@ -367,6 +367,91 @@ func GetLogDetail(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"success": true, "data": log})
 }
 
+// ---------------------------------------------------------------------------
+// Sessions — group api_logs by X-Claude-Code-Session-Id header
+// ---------------------------------------------------------------------------
+
+// ListSessions returns one row per distinct non-NULL session_id, ordered
+// by most recent activity. The handler enriches each row with the distinct
+// model list and status code distribution so the list query stays
+// simple at the SQL layer.
+func ListSessions(c *gin.Context) {
+	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "20"))
+	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
+	q := c.Query("q")
+
+	sessions, err := db.GetSessions(c.Request.Context(), db.SessionsListFilter{
+		Query: q, Limit: limit, Offset: offset,
+	})
+	if err != nil {
+		serverError(c, err)
+		return
+	}
+
+	for i := range sessions {
+		models, mErr := db.GetDistinctSessionModels(c.Request.Context(), sessions[i].SessionID)
+		if mErr == nil {
+			sessions[i].Models = models
+		}
+		statuses, sErr := db.GetSessionStatusSummary(c.Request.Context(), sessions[i].SessionID)
+		if sErr == nil {
+			sessions[i].StatusSummary = statuses
+		}
+		protos, pErr := db.GetSessionProtocolSummary(c.Request.Context(), sessions[i].SessionID)
+		if pErr == nil {
+			sessions[i].ProtocolSummary = protos
+		}
+	}
+
+	total, _ := db.GetSessionCount(c.Request.Context(), q)
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": sessions, "total": total})
+}
+
+// GetSession returns all logs belonging to a single session in
+// chronological order (id ASC), plus the aggregate meta used by the
+// detail page header.
+func GetSession(c *gin.Context) {
+	sessionID := c.Param("id")
+	if sessionID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "session id required"})
+		return
+	}
+
+	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "100"))
+	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
+
+	meta, err := db.GetSessionMeta(c.Request.Context(), sessionID)
+	if err != nil {
+		serverError(c, err)
+		return
+	}
+	if meta == nil || meta.RequestCount == 0 {
+		c.JSON(http.StatusNotFound, gin.H{"success": false, "message": "Session not found"})
+		return
+	}
+
+	models, _ := db.GetDistinctSessionModels(c.Request.Context(), sessionID)
+	meta.Models = models
+	statuses, _ := db.GetSessionStatusSummary(c.Request.Context(), sessionID)
+	meta.StatusSummary = statuses
+	protos, _ := db.GetSessionProtocolSummary(c.Request.Context(), sessionID)
+	meta.ProtocolSummary = protos
+
+	logs, err := db.GetLogsBySession(c.Request.Context(), sessionID, limit, offset)
+	if err != nil {
+		serverError(c, err)
+		return
+	}
+	total, _ := db.GetLogCountBySession(c.Request.Context(), sessionID)
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data":    logs,
+		"total":   total,
+		"meta":    meta,
+	})
+}
+
 func ListStatusCodes(c *gin.Context) {
 	codes, err := db.GetDistinctStatusCodes(c.Request.Context())
 	if err != nil {

@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/lys1313013/llm-gateway/backend/internal/config"
@@ -420,3 +421,240 @@ func scanLogs(rows interface {
 
 // avoid "imported and not used" if a build tag strips callers
 var _ = time.Now
+
+// ---------------------------------------------------------------------------
+// Sessions — group api_logs by session_id (X-Claude-Code-Session-Id header)
+// ---------------------------------------------------------------------------
+
+// SessionSummary is one row in the session list. Models and StatusSummary
+// are populated separately by the handler so the list query stays simple.
+type SessionSummary struct {
+	SessionID        string         `json:"session_id"`
+	RequestCount     int            `json:"request_count"`
+	PromptTokens     int            `json:"prompt_tokens"`
+	CompletionTokens int            `json:"completion_tokens"`
+	TotalTokens      int            `json:"total_tokens"`
+	FirstAt          *time.Time     `json:"first_at,omitempty"`
+	LastAt           *time.Time     `json:"last_at,omitempty"`
+	Models           []string       `json:"models,omitempty"`
+	StatusSummary    map[string]int `json:"status_summary,omitempty"`
+	ProtocolSummary  map[string]int `json:"protocol_summary,omitempty"`
+}
+
+// SessionMeta is the header card data for the session detail page. It
+// reuses the aggregate fields from SessionSummary and exposes them
+// without the per-session list-view extras.
+type SessionMeta struct {
+	SessionID        string         `json:"session_id"`
+	RequestCount     int            `json:"request_count"`
+	PromptTokens     int            `json:"prompt_tokens"`
+	CompletionTokens int            `json:"completion_tokens"`
+	TotalTokens      int            `json:"total_tokens"`
+	FirstAt          *time.Time     `json:"first_at,omitempty"`
+	LastAt           *time.Time     `json:"last_at,omitempty"`
+	Models           []string       `json:"models,omitempty"`
+	StatusSummary    map[string]int `json:"status_summary,omitempty"`
+	ProtocolSummary  map[string]int `json:"protocol_summary,omitempty"`
+}
+
+type SessionsListFilter struct {
+	Query  string // optional ILIKE match on session_id
+	Limit  int
+	Offset int
+}
+
+func GetSessions(ctx context.Context, f SessionsListFilter) ([]SessionSummary, error) {
+	limit := f.Limit
+	if limit <= 0 {
+		limit = 20
+	}
+	if limit > 500 {
+		limit = 500
+	}
+	offset := f.Offset
+	if offset < 0 {
+		offset = 0
+	}
+
+	q := `SELECT session_id,
+	             COUNT(*) AS request_count,
+	             COALESCE(SUM(prompt_tokens), 0),
+	             COALESCE(SUM(completion_tokens), 0),
+	             COALESCE(SUM(total_tokens), 0),
+	             MIN(created_at) AS first_at,
+	             MAX(created_at) AS last_at
+	      FROM api_logs
+	      WHERE session_id IS NOT NULL`
+	args := []any{}
+	idx := 1
+	if f.Query != "" {
+		q += fmt.Sprintf(" AND session_id ILIKE $%d", idx)
+		args = append(args, "%"+f.Query+"%")
+		idx++
+	}
+	q += fmt.Sprintf(" GROUP BY session_id ORDER BY MAX(created_at) DESC LIMIT $%d OFFSET $%d", idx, idx+1)
+	args = append(args, limit, offset)
+
+	rows, err := mustHavePool().Query(ctx, q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]SessionSummary, 0)
+	for rows.Next() {
+		var s SessionSummary
+		if err := rows.Scan(
+			&s.SessionID, &s.RequestCount,
+			&s.PromptTokens, &s.CompletionTokens, &s.TotalTokens,
+			&s.FirstAt, &s.LastAt,
+		); err != nil {
+			return nil, err
+		}
+		out = append(out, s)
+	}
+	return out, rows.Err()
+}
+
+func GetSessionCount(ctx context.Context, query string) (int, error) {
+	q := `SELECT COUNT(*) FROM (SELECT session_id FROM api_logs WHERE session_id IS NOT NULL`
+	args := []any{}
+	if query != "" {
+		q += " AND session_id ILIKE $1"
+		args = append(args, "%"+query+"%")
+	}
+	q += " GROUP BY session_id) t"
+	var n int
+	err := mustHavePool().QueryRow(ctx, q, args...).Scan(&n)
+	return n, err
+}
+
+// GetLogsBySession returns logs for a single session in chronological
+// order (id ASC) so the detail page reads top-to-bottom like a transcript.
+func GetLogsBySession(ctx context.Context, sessionID string, limit, offset int) ([]models.APILog, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	if limit > 500 {
+		limit = 500
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	rows, err := mustHavePool().Query(ctx, `
+		SELECT id, created_at, updated_at, model, provider_id, provider_name,
+		       is_stream, status_code,
+		       processing_time_ms, prompt_tokens, completion_tokens, total_tokens,
+		       target_url,
+		       error_message, protocol,
+		       usage_data, cache_creation_input_tokens, cache_read_input_tokens,
+		       session_id
+		FROM api_logs
+		WHERE session_id = $1
+		ORDER BY id ASC
+		LIMIT $2 OFFSET $3`, sessionID, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanLogs(rows)
+}
+
+func GetLogCountBySession(ctx context.Context, sessionID string) (int, error) {
+	var n int
+	err := mustHavePool().QueryRow(ctx,
+		`SELECT COUNT(*) FROM api_logs WHERE session_id = $1`, sessionID).Scan(&n)
+	return n, err
+}
+
+func GetSessionMeta(ctx context.Context, sessionID string) (*SessionMeta, error) {
+	row := mustHavePool().QueryRow(ctx, `
+		SELECT COUNT(*),
+		       COALESCE(SUM(prompt_tokens), 0),
+		       COALESCE(SUM(completion_tokens), 0),
+		       COALESCE(SUM(total_tokens), 0),
+		       MIN(created_at), MAX(created_at)
+		FROM api_logs WHERE session_id = $1`, sessionID)
+	m := SessionMeta{SessionID: sessionID}
+	if err := row.Scan(
+		&m.RequestCount,
+		&m.PromptTokens, &m.CompletionTokens, &m.TotalTokens,
+		&m.FirstAt, &m.LastAt,
+	); err != nil {
+		return nil, err
+	}
+	if m.RequestCount == 0 {
+		return nil, nil
+	}
+	return &m, nil
+}
+
+// GetDistinctSessionModels returns the unique, non-NULL model names for a
+// session, ordered by frequency. Capped at 100 to keep the UI list
+// manageable.
+func GetDistinctSessionModels(ctx context.Context, sessionID string) ([]string, error) {
+	rows, err := mustHavePool().Query(ctx, `
+		SELECT model
+		FROM api_logs
+		WHERE session_id = $1 AND model IS NOT NULL
+		GROUP BY model
+		ORDER BY COUNT(*) DESC, model ASC
+		LIMIT 100`, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var m string
+		if err := rows.Scan(&m); err != nil {
+			return nil, err
+		}
+		out = append(out, m)
+	}
+	return out, rows.Err()
+}
+
+func GetSessionStatusSummary(ctx context.Context, sessionID string) (map[string]int, error) {
+	rows, err := mustHavePool().Query(ctx, `
+		SELECT status_code, COUNT(*)
+		FROM api_logs
+		WHERE session_id = $1 AND status_code IS NOT NULL
+		GROUP BY status_code
+		ORDER BY status_code ASC`, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]int{}
+	for rows.Next() {
+		var code, count int
+		if err := rows.Scan(&code, &count); err != nil {
+			return nil, err
+		}
+		out[strconv.Itoa(code)] = count
+	}
+	return out, rows.Err()
+}
+
+func GetSessionProtocolSummary(ctx context.Context, sessionID string) (map[string]int, error) {
+	rows, err := mustHavePool().Query(ctx, `
+		SELECT protocol, COUNT(*)
+		FROM api_logs
+		WHERE session_id = $1 AND protocol IS NOT NULL
+		GROUP BY protocol
+		ORDER BY protocol ASC`, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]int{}
+	for rows.Next() {
+		var proto string
+		var count int
+		if err := rows.Scan(&proto, &count); err != nil {
+			return nil, err
+		}
+		out[proto] = count
+	}
+	return out, rows.Err()
+}
