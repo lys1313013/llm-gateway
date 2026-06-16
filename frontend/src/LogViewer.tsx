@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Button, Card, Col, Descriptions, Input, Modal, Row, Select, Space, Statistic, Table, Tag, Typography, message } from 'antd'
+import { Button, Card, Col, Descriptions, Input, Modal, Row, Select, Space, Statistic, Table, Tag, Tooltip, Typography, message } from 'antd'
 import type { TableColumnsType } from 'antd'
+import { ClusterOutlined } from '@ant-design/icons'
 import dayjs from 'dayjs'
 import JsonViewer from './JsonViewer'
 import { apiFetch } from './api'
@@ -29,7 +30,11 @@ type LogRecord = {
   request_headers?: unknown
   response_headers?: unknown
   error_message?: string | null
+  session_id?: string | null
 }
+
+const truncateId = (id: string, head = 8) =>
+  id.length <= head + 3 ? id : `${id.slice(0, head)}…`
 
 const LogViewer = () => {
   const [currentPage, setCurrentPage] = useState(1)
@@ -244,6 +249,27 @@ const LogViewer = () => {
         },
       },
       {
+        title: '会话 ID',
+        dataIndex: 'session_id',
+        width: 170,
+        render: (sid?: string | null) => {
+          if (!sid) return <Text type="secondary">-</Text>
+          return (
+            <Tooltip title={sid} mouseEnterDelay={0.4}>
+              <Button
+                type="link"
+                size="small"
+                icon={<ClusterOutlined />}
+                style={{ padding: 0, fontFamily: 'monospace', fontSize: 12 }}
+                onClick={() => { window.location.hash = `#/sessions/${sid}` }}
+              >
+                {truncateId(sid)}
+              </Button>
+            </Tooltip>
+          )
+        },
+      },
+      {
         title: '操作',
         key: 'action',
         width: 100,
@@ -351,9 +377,23 @@ const LogViewer = () => {
         title={
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', paddingRight: 32 }}>
             <span>{`日志详情 - ID: ${currentLog?.id ?? ''}`}</span>
-            <Button size="small" onClick={() => setHeadersModalVisible(true)}>
-              查看请求头
-            </Button>
+            <Space>
+              {currentLog?.session_id && (
+                <Button
+                  size="small"
+                  icon={<ClusterOutlined />}
+                  onClick={() => {
+                    const sid = currentLog.session_id
+                    if (sid) window.location.hash = `#/sessions/${sid}`
+                  }}
+                >
+                  查看该会话
+                </Button>
+              )}
+              <Button size="small" onClick={() => setHeadersModalVisible(true)}>
+                查看请求头
+              </Button>
+            </Space>
           </div>
         }
         open={modalVisible}

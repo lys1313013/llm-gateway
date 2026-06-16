@@ -137,7 +137,7 @@ const ConfigExposedModel = () => {
     try {
       const res = await apiFetch('/api/exposed_model', signal ? { signal } : undefined)
       const json = await res.json()
-      if (json.success) setData(json.data)
+      if (json.success) setData(json.data || [])
     } catch (e) {
       if (e instanceof Error && e.name !== 'AbortError') {
         message.error('获取模型列表失败')
