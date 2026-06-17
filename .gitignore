@@ -4,6 +4,11 @@ docker/.env
 *.env.bak.*
 *.env.*.bak
 
+# Python bytecode
+__pycache__/
+*.pyc
+*.pyo
+
 # Local debug / scratch artifacts
 minimax_token.html
 
