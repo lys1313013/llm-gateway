@@ -229,6 +229,21 @@ function normalizeAnthropicResponse(resp: Record<string, unknown>): Message[] {
       }
     }
   }
+  // OpenAI 流式聚合后 response_data 是裸消息（无 choices 包装），工具调用
+  // 存在顶层 tool_calls 字段里——这里要认出来，否则最后一步的工具会丢。
+  if (Array.isArray(resp.tool_calls) && resp.tool_calls.length > 0) {
+    const calls: ToolCall[] = (resp.tool_calls as unknown[]).map((tc) => {
+      const t = asObject(tc) ?? {}
+      const fn = asObject(t.function) ?? {}
+      const rawArgs = fn.arguments ?? t.arguments
+      return {
+        name: String(fn.name ?? t.name ?? 'unknown'),
+        args: typeof rawArgs === 'string' ? rawArgs : safeStringify(rawArgs),
+        id: t.id as string | undefined,
+      }
+    })
+    blocks.push({ kind: 'tool_calls', calls })
+  }
   return blocks.length > 0 ? [{ role: 'assistant', blocks }] : []
 }
 
