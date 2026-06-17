@@ -25,6 +25,7 @@ services:
       DB_TIMEZONE: ${DB_TIMEZONE:-Asia/Shanghai}
       JWT_SECRET_KEY: ${JWT_SECRET_KEY:-change-me-to-a-random-secret-string}
       LOG_LEVEL: ${LOG_LEVEL:-info}
+      SESSION_ID_HEADERS: ${SESSION_ID_HEADERS:-X-Claude-Code-Session-Id,X-Agent-Session-Id}
     ports:
       - "${BACKEND_HOST_PORT:-33352}:5001"
     extra_hosts:
