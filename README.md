@@ -4,7 +4,7 @@
 
 [![Go](https://img.shields.io/badge/Go-1.x-00add8?logo=go)](backend/go.mod)
 [![React](https://img.shields.io/badge/React-19-61dafb?logo=react)](frontend/package.json)
-[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-15-336791?logo=postgresql)](docker-compose.yml)
+[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-15-336791?logo=postgresql)](docker/docker-compose.yml)
 [![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
 
 ---
