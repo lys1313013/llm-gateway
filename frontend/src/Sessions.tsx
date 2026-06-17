@@ -317,7 +317,7 @@ const Sessions = () => {
             emptyText: (
               <Empty
                 image={Empty.PRESENTED_IMAGE_SIMPLE}
-                description="暂无会话记录，请确认请求是否带 X-Claude-Code-Session-Id 头"
+                description="暂无会话记录，请确认请求是否带了 session id 请求头（如 X-Claude-Code-Session-Id、X-Agent-Session-Id，具体由后端 SESSION_ID_HEADERS 配置）"
               />
             ),
           }}

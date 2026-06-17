@@ -449,7 +449,7 @@ func scanLogs(rows interface {
 var _ = time.Now
 
 // ---------------------------------------------------------------------------
-// Sessions — group api_logs by session_id (X-Claude-Code-Session-Id header)
+// Sessions — 按 session_id（由配置请求头解析）对 api_logs 进行聚合
 // ---------------------------------------------------------------------------
 
 // SessionSummary is one row in the session list. Models and StatusSummary

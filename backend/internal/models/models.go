@@ -120,9 +120,9 @@ type ProxyConfig struct {
 	// RequestHeaders is the sanitized incoming request header map (auth
 	// headers removed). Stored in api_logs.request_headers.
 	RequestHeaders map[string]string
-	// SessionID is the value of the X-Claude-Code-Session-Id request
-	// header, or empty when the client did not provide one. Stored in
-	// api_logs.session_id so requests can be grouped per conversation.
+	// SessionID 是从配置的 session id 请求头（见 config.SessionIDHeaders）
+	// 中解析出的值；客户端未传时为空。写入 api_logs.session_id，用于按
+	// 会话聚合请求。
 	SessionID string
 	// IfEmpty is used by some callers as a fallback for AnthropicVersion.
 	// Kept for parity with the Python ProxyConfig; the handler fills it in.

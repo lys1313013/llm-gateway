@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"os"
 	"regexp"
+	"strings"
 
 	"github.com/joho/godotenv"
 )
@@ -20,6 +21,11 @@ type Config struct {
 	JWTSecret      string
 	JWTExpirationH int
 	LogLevel       string
+	// SessionIDHeaders 是网关按顺序扫描的 session id 请求头列表，取第一个
+	// 非空值写入 api_logs.session_id。通过环境变量 SESSION_ID_HEADERS
+	// （逗号分隔）配置；默认沿用原有的 X-Claude-Code-Session-Id，
+	// 保持向后兼容。
+	SessionIDHeaders []string
 }
 
 var cfg *Config
@@ -30,16 +36,17 @@ func Load() *Config {
 	_ = godotenv.Load()
 
 	cfg = &Config{
-		HTTPPort:       getEnvInt("PORT", 5002),
-		DBHost:         getEnv("DB_HOST", "localhost"),
-		DBPort:         getEnv("DB_PORT", "5432"),
-		DBName:         getEnv("DB_NAME", "llm_gateway"),
-		DBUser:         getEnv("DB_USER", "postgres"),
-		DBPassword:     getEnv("DB_PASSWORD", "password"),
-		DBTimezone:     getEnvTZ("DB_TIMEZONE", "Asia/Shanghai"),
-		JWTSecret:      getEnv("JWT_SECRET_KEY", "dev-secret-key-change-in-production"),
-		JWTExpirationH: getEnvInt("JWT_EXPIRATION_HOURS", 24),
-		LogLevel:       getEnv("LOG_LEVEL", "info"),
+		HTTPPort:         getEnvInt("PORT", 5002),
+		DBHost:           getEnv("DB_HOST", "localhost"),
+		DBPort:           getEnv("DB_PORT", "5432"),
+		DBName:           getEnv("DB_NAME", "llm_gateway"),
+		DBUser:           getEnv("DB_USER", "postgres"),
+		DBPassword:       getEnv("DB_PASSWORD", "password"),
+		DBTimezone:       getEnvTZ("DB_TIMEZONE", "Asia/Shanghai"),
+		JWTSecret:        getEnv("JWT_SECRET_KEY", "dev-secret-key-change-in-production"),
+		JWTExpirationH:   getEnvInt("JWT_EXPIRATION_HOURS", 24),
+		LogLevel:         getEnv("LOG_LEVEL", "info"),
+		SessionIDHeaders: getEnvCSV("SESSION_ID_HEADERS", []string{"X-Claude-Code-Session-Id"}),
 	}
 	return cfg
 }
@@ -85,4 +92,26 @@ func getEnvTZ(key, def string) string {
 	}
 	slog.Warn("invalid DB_TIMEZONE, falling back to UTC", "value", v)
 	return "UTC"
+}
+
+// getEnvCSV 读取逗号分隔的环境变量，返回去除空白、忽略空项的字符串切片。
+// 未设置或全部为空时回退到 def。
+func getEnvCSV(key string, def []string) []string {
+	raw, ok := os.LookupEnv(key)
+	if !ok || raw == "" {
+		return def
+	}
+	parts := strings.Split(raw, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		out = append(out, p)
+	}
+	if len(out) == 0 {
+		return def
+	}
+	return out
 }

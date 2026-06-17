@@ -387,7 +387,7 @@ func DeleteLog(c *gin.Context) {
 }
 
 // ---------------------------------------------------------------------------
-// Sessions — group api_logs by X-Claude-Code-Session-Id header
+// Sessions — 按 session_id（由配置请求头解析）对 api_logs 进行聚合
 // ---------------------------------------------------------------------------
 
 // ListSessions returns one row per distinct non-NULL session_id, ordered

@@ -20,8 +20,9 @@ Residue handling — the script is self-healing, no admin credentials required:
     "不能删除自己"), so it is intentionally left for the *next* run to
     clean up via pre-cleanup. Worst case: 1 stale e2e_jwt_* user between
     runs.
-  * Real upstream calls tag their api_logs with X-Claude-Code-Session-Id;
-    the suite prints the id so a human / cron can purge them.
+  * 真实的上游调用会使用配置的 session id 请求头（默认
+    X-Claude-Code-Session-Id）为 api_logs 打标，套件会打印该 id，
+    方便人工或定时任务清理。
 
 Exit code 0 = all green, non-zero = some check failed.
 """

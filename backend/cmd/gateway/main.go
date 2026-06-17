@@ -174,7 +174,7 @@ func registerRoutes(r *gin.Engine) {
 	r.GET("/api/logs/status_codes", handlers.ListStatusCodes)
 	r.GET("/api/stats/daily_tokens", handlers.DailyTokenStats)
 
-	// Sessions — group api_logs by X-Claude-Code-Session-Id header
+	// Sessions — 按配置的 session id 请求头对 api_logs 进行聚合
 	r.GET("/api/sessions", handlers.ListSessions)
 	r.GET("/api/sessions/:id", handlers.GetSession)
 	r.DELETE("/api/sessions/:id", handlers.DeleteSession)

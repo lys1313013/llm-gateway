@@ -14,11 +14,24 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/lys1313013/llm-gateway/backend/internal/config"
 	"github.com/lys1313013/llm-gateway/backend/internal/db"
 	hdrpkg "github.com/lys1313013/llm-gateway/backend/internal/headers"
 	"github.com/lys1313013/llm-gateway/backend/internal/models"
 	"github.com/lys1313013/llm-gateway/backend/internal/proxy"
 )
+
+// resolveSessionID 按配置顺序扫描 SESSION_ID_HEADERS，返回第一个非空值。
+// 集中到一处，方便部署方同时识别多种上游客户端（例如 Claude Code 的
+// X-Claude-Code-Session-Id 以及自定义 Agent 的 X-Agent-Session-Id）。
+func resolveSessionID(c *gin.Context) string {
+	for _, name := range config.Get().SessionIDHeaders {
+		if v := strings.TrimSpace(c.GetHeader(name)); v != "" {
+			return v
+		}
+	}
+	return ""
+}
 
 // ---------------------------------------------------------------------------
 // /v1/models
@@ -91,7 +104,7 @@ func ChatCompletions(c *gin.Context) {
 		ProviderID:     route.ProviderID,
 		ProviderName:   strDeref(route.ProviderName),
 		RequestHeaders: hdrpkg.FromMap(collectHeaders(c.Request.Header)),
-		SessionID:      c.GetHeader("X-Claude-Code-Session-Id"),
+		SessionID:      resolveSessionID(c),
 	}
 
 	status, headers, bodyRC, isStream, err := proxy.HandleOpenAI(c.Request.Context(), body, cfg)
@@ -262,7 +275,7 @@ func AnthropicMessages(c *gin.Context) {
 		ProviderID:       route.ProviderID,
 		ProviderName:     strDeref(route.ProviderName),
 		RequestHeaders:   hdrpkg.FromMap(collectHeaders(c.Request.Header)),
-		SessionID:        c.GetHeader("X-Claude-Code-Session-Id"),
+		SessionID:        resolveSessionID(c),
 	}
 
 	status, headers, bodyRC, isStream, err := proxy.HandleAnthropic(c.Request.Context(), body, cfg)
