@@ -155,6 +155,32 @@ func GetLogByID(ctx context.Context, id int) (*models.APILog, error) {
 	return l, nil
 }
 
+// DeleteLog removes a single log row. Returns ErrNotFound when no row matched.
+func DeleteLog(ctx context.Context, id int) error {
+	tag, err := mustHavePool().Exec(ctx, `DELETE FROM api_logs WHERE id = $1`, id)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// DeleteLogsBySession removes every log row whose session_id matches. Returns
+// ErrNotFound when the session had no logs (so the handler can return 404).
+func DeleteLogsBySession(ctx context.Context, sessionID string) (int64, error) {
+	tag, err := mustHavePool().Exec(ctx,
+		`DELETE FROM api_logs WHERE session_id = $1`, sessionID)
+	if err != nil {
+		return 0, err
+	}
+	if tag.RowsAffected() == 0 {
+		return 0, ErrNotFound
+	}
+	return tag.RowsAffected(), nil
+}
+
 func GetLogCount(ctx context.Context, model, protocol string, statusCode int) (int, error) {
 	q := `SELECT COUNT(*) FROM api_logs WHERE 1=1`
 	args := []any{}

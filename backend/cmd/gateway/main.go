@@ -169,6 +169,7 @@ func registerRoutes(r *gin.Engine) {
 	// Logs / stats
 	r.GET("/api/logs", handlers.ListLogs)
 	r.GET("/api/logs/:id", handlers.GetLogDetail)
+	r.DELETE("/api/logs/:id", handlers.DeleteLog)
 	r.GET("/api/logs/today_stats", handlers.TodayStats)
 	r.GET("/api/logs/status_codes", handlers.ListStatusCodes)
 	r.GET("/api/stats/daily_tokens", handlers.DailyTokenStats)
@@ -176,6 +177,7 @@ func registerRoutes(r *gin.Engine) {
 	// Sessions — group api_logs by X-Claude-Code-Session-Id header
 	r.GET("/api/sessions", handlers.ListSessions)
 	r.GET("/api/sessions/:id", handlers.GetSession)
+	r.DELETE("/api/sessions/:id", handlers.DeleteSession)
 
 	// Admin test endpoints
 	r.POST("/api/test/chat", handlers.TestChat)

@@ -367,6 +367,25 @@ func GetLogDetail(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"success": true, "data": log})
 }
 
+// DeleteLog removes a single log row. Logs are append-only audit data, so
+// this is intended for cleanup of noisy / test runs, not routine use.
+func DeleteLog(c *gin.Context) {
+	id, _ := strconv.Atoi(c.Param("id"))
+	if id <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "invalid log id"})
+		return
+	}
+	if err := db.DeleteLog(c.Request.Context(), id); err != nil {
+		if err == db.ErrNotFound {
+			c.JSON(http.StatusNotFound, gin.H{"success": false, "message": "Log not found"})
+			return
+		}
+		serverError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "message": "已删除"})
+}
+
 // ---------------------------------------------------------------------------
 // Sessions — group api_logs by X-Claude-Code-Session-Id header
 // ---------------------------------------------------------------------------
@@ -449,6 +468,31 @@ func GetSession(c *gin.Context) {
 		"data":    logs,
 		"total":   total,
 		"meta":    meta,
+	})
+}
+
+// DeleteSession removes every log row belonging to a session. The session
+// itself is a grouping of api_logs by session_id, so deleting the session
+// is implemented as a cascade delete on that column.
+func DeleteSession(c *gin.Context) {
+	sessionID := c.Param("id")
+	if sessionID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "session id required"})
+		return
+	}
+	deleted, err := db.DeleteLogsBySession(c.Request.Context(), sessionID)
+	if err != nil {
+		if err == db.ErrNotFound {
+			c.JSON(http.StatusNotFound, gin.H{"success": false, "message": "Session not found"})
+			return
+		}
+		serverError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "已删除会话",
+		"data":    gin.H{"deleted_logs": deleted},
 	})
 }
 
