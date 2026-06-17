@@ -37,14 +37,29 @@ func mustEnv(k, def string) string {
 	return def
 }
 
+// requireEnv returns the value of k or skips the test if k is not set.
+// Use this for anything that must never fall back to a hardcoded value
+// (database host, database password). Plain mustEnv keeps safe defaults
+// for non-sensitive parameters like the port or user name.
+func requireEnv(t *testing.T, k string) string {
+	t.Helper()
+	if v, ok := os.LookupEnv(k); ok && v != "" {
+		return v
+	}
+	t.Skipf("skipping: required env var %s is not set", k)
+	return ""
+}
+
 func setupRouter(t *testing.T) *gin.Engine {
 	t.Helper()
-	// Force a deterministic env so we don't pick up the dev .env
-	_ = os.Setenv("DB_HOST", mustEnv("TEST_DB_HOST", "REDACTED-HOST"))
-	_ = os.Setenv("DB_PORT", mustEnv("TEST_DB_PORT", "35432"))
+	// Force a deterministic env so we don't pick up the dev .env.
+	// Host + password MUST come from env — never hardcoded, since this
+	// file is committed. Port / name / user have safe generic defaults.
+	_ = os.Setenv("DB_HOST", requireEnv(t, "TEST_DB_HOST"))
+	_ = os.Setenv("DB_PORT", mustEnv("TEST_DB_PORT", "5432"))
 	_ = os.Setenv("DB_NAME", mustEnv("TEST_DB_NAME", "llm_gateway"))
 	_ = os.Setenv("DB_USER", mustEnv("TEST_DB_USER", "postgres"))
-	_ = os.Setenv("DB_PASSWORD", mustEnv("TEST_DB_PASSWORD", `REDACTED-PASSWORD`))
+	_ = os.Setenv("DB_PASSWORD", requireEnv(t, "TEST_DB_PASSWORD"))
 	_ = os.Setenv("JWT_SECRET_KEY", "test-secret")
 
 	config.Load()
