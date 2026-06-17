@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import {
-  Button, Card, Empty, Input, Space, Table, Tag, Tooltip, Typography, message,
+  Button, Card, Empty, Input, Popconfirm, Space, Table, Tag, Tooltip, Typography, message,
 } from 'antd'
 import type { TableColumnsType } from 'antd'
 import { CopyOutlined, ReloadOutlined, SearchOutlined } from '@ant-design/icons'
@@ -109,6 +109,31 @@ const Sessions = () => {
     void fetchSessions(page, appliedQuery)
   }
 
+  const handleDelete = async (record: SessionSummary) => {
+    try {
+      const res = await apiFetch(
+        `/api/sessions/${encodeURIComponent(record.session_id)}`,
+        { method: 'DELETE' },
+      )
+      const json = await res.json()
+      if (!res.ok || !json.success) {
+        message.error(json.message || '删除失败')
+        return
+      }
+      const n = (json.data && json.data.deleted_logs) || 0
+      message.success(`已删除会话及其 ${n} 条日志`)
+      // After deleting a row the page may now be empty — fall back to the
+      // previous page when this was the last row on the current page.
+      const wasLast = sessions.length === 1 && currentPage > 1
+      const nextPage = wasLast ? currentPage - 1 : currentPage
+      if (wasLast) setCurrentPage(nextPage)
+      void fetchSessions(nextPage, appliedQuery)
+    } catch (e) {
+      console.error('删除会话失败:', e)
+      message.error('删除会话失败')
+    }
+  }
+
   const columns: TableColumnsType<SessionSummary> = [
     {
       title: '会话 ID',
@@ -215,14 +240,32 @@ const Sessions = () => {
     {
       title: '操作',
       key: 'action',
-      width: 110,
+      width: 170,
       render: (_, record) => (
-        <Button
-          type="link"
-          onClick={() => { window.location.hash = `#/sessions/${record.session_id}` }}
-        >
-          查看详情
-        </Button>
+        <Space size={4}>
+          <Button
+            type="link"
+            size="small"
+            onClick={() => { window.location.hash = `#/sessions/${record.session_id}` }}
+          >
+            查看详情
+          </Button>
+          <Popconfirm
+            title={
+              <span>
+                确定删除会话 <Text code style={{ fontSize: 12 }}>{truncate(record.session_id, 6, 3)}</Text> 吗？
+                <br />
+                将同时删除该会话下的 <strong>{record.request_count}</strong> 条日志，且不可恢复。
+              </span>
+            }
+            okText="删除"
+            okButtonProps={{ danger: true }}
+            cancelText="取消"
+            onConfirm={() => handleDelete(record)}
+          >
+            <Button type="link" size="small" danger>删除</Button>
+          </Popconfirm>
+        </Space>
       ),
     },
   ]

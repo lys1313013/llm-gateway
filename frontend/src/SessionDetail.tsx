@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
-  Alert, Button, Card, Col, Descriptions, Empty, Row, Space, Statistic, Table, Tag, Typography, message,
+  Alert, Button, Card, Col, Descriptions, Empty, Popconfirm, Row, Space, Statistic, Table, Tag, Typography, message,
 } from 'antd'
 import type { TableColumnsType } from 'antd'
 import {
-  ArrowLeftOutlined, CopyOutlined, ReloadOutlined,
+  ArrowLeftOutlined, CopyOutlined, DeleteOutlined, ReloadOutlined,
 } from '@ant-design/icons'
 import dayjs from 'dayjs'
 import JsonViewer from './JsonViewer'
@@ -133,6 +133,26 @@ const SessionDetail = ({ sessionId }: Props) => {
     window.location.hash = '#/sessions'
   }
 
+  const handleDeleteSession = async () => {
+    try {
+      const res = await apiFetch(
+        `/api/sessions/${encodeURIComponent(sessionId)}`,
+        { method: 'DELETE' },
+      )
+      const json = await res.json()
+      if (!res.ok || !json.success) {
+        message.error(json.message || '删除失败')
+        return
+      }
+      const n = (json.data && json.data.deleted_logs) || 0
+      message.success(`已删除会话及其 ${n} 条日志`)
+      window.location.hash = '#/sessions'
+    } catch (e) {
+      console.error('删除会话失败:', e)
+      message.error('删除会话失败')
+    }
+  }
+
   const columns: TableColumnsType<SessionLog> = useMemo(
     () => [
       {
@@ -223,6 +243,23 @@ const SessionDetail = ({ sessionId }: Props) => {
         <Button icon={<ReloadOutlined />} onClick={handleRefresh} loading={loading}>
           刷新
         </Button>
+        {meta && (
+          <Popconfirm
+            title={
+              <span>
+                确定删除整个会话吗？
+                <br />
+                将同时删除该会话下的 <strong>{meta.request_count}</strong> 条日志，且不可恢复。
+              </span>
+            }
+            okText="删除"
+            okButtonProps={{ danger: true }}
+            cancelText="取消"
+            onConfirm={handleDeleteSession}
+          >
+            <Button danger icon={<DeleteOutlined />}>删除会话</Button>
+          </Popconfirm>
+        )}
       </Space>
 
       <Card style={{ marginBottom: 16 }}>

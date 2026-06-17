@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from 'react'
-import { Button, Card, Col, Descriptions, Input, Modal, Row, Select, Space, Statistic, Table, Tag, Tooltip, Typography, message } from 'antd'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { Button, Card, Col, Descriptions, Input, Modal, Popconfirm, Row, Select, Space, Statistic, Table, Tag, Tooltip, Typography, message } from 'antd'
 import type { TableColumnsType } from 'antd'
 import { ClusterOutlined } from '@ant-design/icons'
 import dayjs from 'dayjs'
@@ -151,6 +151,33 @@ const LogViewer = () => {
     }
   }
 
+  const handleDelete = useCallback(async (record: LogRecord) => {
+    try {
+      const res = await apiFetch(`/api/logs/${record.id}`, { method: 'DELETE' })
+      const json = await res.json()
+      if (!res.ok || !json.success) {
+        message.error(json.message || '删除失败')
+        return
+      }
+      message.success('已删除日志')
+      // Close the detail modal if it was showing the row we just deleted.
+      if (modalVisible && currentLog?.id === record.id) {
+        setModalVisible(false)
+        setCurrentLog(null)
+      }
+      // Empty page fallback — re-fetch the previous page if this was the
+      // last row on the current page.
+      const wasLast = logs.length === 1 && currentPage > 1
+      const nextPage = wasLast ? currentPage - 1 : currentPage
+      if (wasLast) setCurrentPage(nextPage)
+      void fetchLogs(nextPage, filterModel || undefined, filterProtocol, filterStatusCode)
+      void fetchTodayStats()
+    } catch (e) {
+      console.error('删除日志失败:', e)
+      message.error('删除日志失败')
+    }
+  }, [modalVisible, currentLog, logs.length, currentPage, filterModel, filterProtocol, filterStatusCode])
+
   const columns: TableColumnsType<LogRecord> = useMemo(
     () => [
       {
@@ -273,15 +300,26 @@ const LogViewer = () => {
       {
         title: '操作',
         key: 'action',
-        width: 100,
+        width: 160,
         render: (_, record) => (
-          <Button type="link" onClick={() => handleViewDetails(record)}>
-            查看详情
-          </Button>
+          <Space size={4}>
+            <Button type="link" size="small" onClick={() => handleViewDetails(record)}>
+              查看详情
+            </Button>
+            <Popconfirm
+              title={`确定删除日志 #${record.id} 吗？此操作不可恢复。`}
+              okText="删除"
+              okButtonProps={{ danger: true }}
+              cancelText="取消"
+              onConfirm={() => handleDelete(record)}
+            >
+              <Button type="link" size="small" danger>删除</Button>
+            </Popconfirm>
+          </Space>
         ),
       },
     ],
-    [currentPage],
+    [handleDelete],
   )
 
   return (
@@ -394,6 +432,17 @@ const LogViewer = () => {
               <Button size="small" onClick={() => setHeadersModalVisible(true)}>
                 查看请求头
               </Button>
+              {currentLog && (
+                <Popconfirm
+                  title={`确定删除日志 #${currentLog.id} 吗？此操作不可恢复。`}
+                  okText="删除"
+                  okButtonProps={{ danger: true }}
+                  cancelText="取消"
+                  onConfirm={() => handleDelete(currentLog)}
+                >
+                  <Button size="small" danger>删除该日志</Button>
+                </Popconfirm>
+              )}
             </Space>
           </div>
         }
