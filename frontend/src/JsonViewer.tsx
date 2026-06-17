@@ -1,5 +1,6 @@
+import { useState } from 'react'
 import Editor, { DiffEditor } from '@monaco-editor/react'
-import { Typography } from 'antd'
+import { Switch, Typography } from 'antd'
 
 const { Text } = Typography
 
@@ -129,8 +130,7 @@ function JsonViewer({ title, value, height = '70vh', style }: JsonViewerProps) {
   )
 }
 
-// Side-by-side JSON diff using Monaco's built-in DiffEditor. Falls back to
-// plaintext when one side isn't valid JSON (e.g. raw error bodies).
+
 function DiffJsonViewer({
   title,
   leftLabel,
@@ -145,6 +145,12 @@ function DiffJsonViewer({
   const language: 'json' | 'plaintext' =
     leftParsed.language === 'json' && rightParsed.language === 'json' ? 'json' : 'plaintext'
 
+  const leftStr = viewerStringify(left)
+  const rightStr = viewerStringify(right)
+
+  const [sideBySide, setSideBySide] = useState(true)
+  const [wordWrap, setWordWrap] = useState(false)
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0, ...style }}>
       {(title || leftLabel || rightLabel) && (
@@ -158,9 +164,21 @@ function DiffJsonViewer({
           }}
         >
           {title ? <Text strong>{title}</Text> : <span />}
-          <div style={{ display: 'flex', gap: 8, fontSize: 12 }}>
-            <Text type="secondary">A: {leftLabel}</Text>
-            <Text type="secondary">B: {rightLabel}</Text>
+          <div style={{ display: 'flex', gap: 16, fontSize: 12, alignItems: 'center' }}>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <Text type="secondary">A: {leftLabel}</Text>
+              <Text type="secondary">B: {rightLabel}</Text>
+            </div>
+            <div style={{ display: 'flex', gap: 16, alignItems: 'center' }}>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                <Text type="secondary">自动换行</Text>
+                <Switch size="small" checked={wordWrap} onChange={setWordWrap} />
+              </div>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                <Text type="secondary">并排对比</Text>
+                <Switch size="small" checked={sideBySide} onChange={setSideBySide} />
+              </div>
+            </div>
           </div>
         </div>
       )}
@@ -173,24 +191,24 @@ function DiffJsonViewer({
         }}
       >
         <DiffEditor
+          key={`${sideBySide}-${wordWrap}`} // Force remount to bypass Monaco bugs when toggling options
           height={height}
           language={language}
-          original={viewerStringify(left)}
-          modified={viewerStringify(right)}
+          original={leftStr}
+          modified={rightStr}
           options={{
             readOnly: true,
             minimap: { enabled: false },
             folding: true,
-            showFoldingControls: 'always',
             scrollBeyondLastLine: false,
-            wordWrap: 'on',
+            wordWrap: wordWrap ? 'on' : 'off',
+            diffWordWrap: wordWrap ? 'on' : 'off',
             automaticLayout: true,
             fontSize: 13,
             lineNumbersMinChars: 3,
             renderValidationDecorations: 'off',
-            renderSideBySide: true,
-            ignoreTrimWhitespace: false,
-            originalEditable: false,
+            renderSideBySide: sideBySide,
+            useInlineViewWhenSpaceIsLimited: false,
           }}
           theme="vs"
         />
