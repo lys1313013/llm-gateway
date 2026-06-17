@@ -287,7 +287,6 @@ const LogViewer = () => {
               <Button
                 type="link"
                 size="small"
-                icon={<ClusterOutlined />}
                 style={{ padding: 0, fontFamily: 'monospace', fontSize: 12 }}
                 onClick={() => { window.location.hash = `#/sessions/${sid}` }}
               >
