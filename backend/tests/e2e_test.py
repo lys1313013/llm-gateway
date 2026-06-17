@@ -9,6 +9,20 @@ exercises every public route. Run the server separately:
     go run ./cmd/gateway     # in another shell
     python3 tests/e2e_test.py
 
+Residue handling — the script is self-healing, no admin credentials required:
+
+  * Before the suite runs, it lists /api/auth/users, /api/exposed_model, and
+    /api/route and deletes any rows left by a prior failed run (anything
+    whose name/pattern starts with `e2e_`, `e2e-model_`, or `e2e-`).
+  * At the end, the just-created exposed_model and route are deleted by the
+    e2e user itself (it's a JWT user with the same /api/* access).
+  * The just-created e2e user cannot delete itself (server enforces
+    "不能删除自己"), so it is intentionally left for the *next* run to
+    clean up via pre-cleanup. Worst case: 1 stale e2e_jwt_* user between
+    runs.
+  * Real upstream calls tag their api_logs with X-Claude-Code-Session-Id;
+    the suite prints the id so a human / cron can purge them.
+
 Exit code 0 = all green, non-zero = some check failed.
 """
 import json
@@ -32,6 +46,21 @@ passed = 0
 failed = 0
 failures: list[str] = []
 
+# Per-run state — populated as tests run, consumed by pre_cleanup() and
+# the end-of-suite teardown block in main().
+state: dict[str, Any] = {
+    "e2e_user_id": None,
+    "e2e_username": None,
+    "exposed_model_id": None,
+    "exposed_model_name": None,
+    "log_session_id": f"e2e-test-{int(time.time())}",
+}
+
+# Residue name patterns. These match the names the suite itself generates.
+USER_PREFIX = "e2e_jwt_"
+MODEL_PREFIX = "e2e_model_"
+ROUTE_PATTERN = "e2e-"
+
 
 def check(name: str, cond: bool, detail: str = ""):
     global passed, failed
@@ -46,6 +75,62 @@ def check(name: str, cond: bool, detail: str = ""):
 
 def section(title: str):
     print(f"\n{YELLOW}▶ {title}{RESET}")
+
+
+# ---------------------------------------------------------------------------
+# Pre-cleanup — delete any rows left over from a prior run. Runs after the
+# e2e JWT user is created (so we have a token) but before the rest of the
+# suite. The e2e user cannot delete itself, so the current run's user is
+# always left for the next run to pick up.
+# ---------------------------------------------------------------------------
+def pre_cleanup(token: str):
+    section("Pre-cleanup (residue from prior runs)")
+    H = {"Authorization": f"Bearer {token}"}
+
+    # Users with e2e_ prefix (excluding self)
+    r = requests.get(f"{BASE_URL}/api/auth/users", headers=H, timeout=5)
+    if r.status_code == 200:
+        users = (r.json().get("data") or [])
+        for u in users:
+            name = u.get("username") or ""
+            if not name.startswith(USER_PREFIX):
+                continue
+            uid = u.get("id")
+            if uid == state["e2e_user_id"]:
+                continue
+            r = requests.delete(f"{BASE_URL}/api/auth/users/{uid}", headers=H, timeout=5)
+            check(f"pre-cleanup delete user '{name}' (id={uid})",
+                  r.status_code == 200, f"got {r.status_code}")
+    else:
+        print(f"  {YELLOW}skip users list — got {r.status_code}{RESET}")
+
+    # Exposed models with e2e_model_ prefix
+    r = requests.get(f"{BASE_URL}/api/exposed_model", headers=H, timeout=5)
+    if r.status_code == 200:
+        for m in (r.json().get("data") or []):
+            mid = m.get("id")
+            name = m.get("model_id") or ""
+            if not name.startswith(MODEL_PREFIX):
+                continue
+            r = requests.delete(f"{BASE_URL}/api/exposed_model/{mid}", headers=H, timeout=5)
+            check(f"pre-cleanup delete exposed_model '{name}' (id={mid})",
+                  r.status_code == 200, f"got {r.status_code}")
+    else:
+        print(f"  {YELLOW}skip exposed_model list — got {r.status_code}{RESET}")
+
+    # Routes with e2e- pattern
+    r = requests.get(f"{BASE_URL}/api/route", headers=H, timeout=5)
+    if r.status_code == 200:
+        for rt in (r.json().get("data") or []):
+            rid = rt.get("id")
+            pattern = rt.get("model_pattern") or ""
+            if not pattern.startswith(ROUTE_PATTERN):
+                continue
+            r = requests.delete(f"{BASE_URL}/api/route/{rid}", headers=H, timeout=5)
+            check(f"pre-cleanup delete route '{pattern}' (id={rid})",
+                  r.status_code == 200, f"got {r.status_code}")
+    else:
+        print(f"  {YELLOW}skip route list — got {r.status_code}{RESET}")
 
 
 # ---------------------------------------------------------------------------
@@ -80,7 +165,7 @@ def test_jwt_auth() -> str:
     section("JWT auth (register, login, me, change_password)")
     import secrets
     suffix = secrets.token_hex(4)
-    username = f"e2e_jwt_{suffix}"
+    username = f"{USER_PREFIX}{suffix}"
     password = "e2e_jwt_pw_123"
 
     r = requests.post(f"{BASE_URL}/api/auth/register",
@@ -91,6 +176,9 @@ def test_jwt_auth() -> str:
     check("register returns a token", bool(token), f"got {data!r}")
     user_id = data.get("user", {}).get("id")
     check("register returns user id", bool(user_id), f"got {data!r}")
+
+    state["e2e_user_id"] = user_id
+    state["e2e_username"] = username
 
     r = requests.post(f"{BASE_URL}/api/auth/login",
                       json={"username": username, "password": password}, timeout=5)
@@ -169,18 +257,19 @@ def test_admin_crud(token: str):
     r = requests.delete(f"{BASE_URL}/api/provider/{pid}", headers=auth, timeout=5)
     check("delete provider", r.status_code == 200, f"got {r.status_code}")
 
-    # Exposed model: duplicate detection
-    name = f"e2e_model_{int(time.time())}"
+    # Exposed model: duplicate detection (created once, expected 409 on second)
+    name = f"{MODEL_PREFIX}{int(time.time())}"
     r = requests.post(f"{BASE_URL}/api/exposed_model", headers=H,
                       json={"model_id": name}, timeout=5)
     check("create exposed model", r.status_code == 200, f"got {r.status_code}: {r.text[:200]}")
+    em_id = (r.json().get("data") or {}).get("id")
+    state["exposed_model_id"] = em_id
+    state["exposed_model_name"] = name
     r = requests.post(f"{BASE_URL}/api/exposed_model", headers=H,
                       json={"model_id": name}, timeout=5)
     check("duplicate exposed model returns 409", r.status_code == 409, f"got {r.status_code}")
-    emid = r.request.url  # not used, just to silence lint
-    _ = emid
 
-    # Route: create
+    # Route: create + delete
     r = requests.post(f"{BASE_URL}/api/route", headers=H, json={
         "model_pattern": "e2e-test-*",
         "route_type": "proxy",
@@ -297,7 +386,10 @@ def test_upstream(api_key: str):
     if not api_key:
         print(f"  {YELLOW}skipped — DB_API_KEY not set{RESET}")
         return
-    headers = {"Authorization": f"Bearer {api_key}"}
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "X-Claude-Code-Session-Id": state["log_session_id"],
+    }
 
     # Non-streaming
     r = requests.post(f"{BASE_URL}/v1/chat/completions", headers=headers, json={
@@ -349,7 +441,11 @@ def test_anthropic(api_key: str):
     if not api_key:
         print(f"  {YELLOW}skipped — DB_API_KEY not set{RESET}")
         return
-    headers = {"x-api-key": api_key, "anthropic-version": "2023-06-01"}
+    headers = {
+        "x-api-key": api_key,
+        "anthropic-version": "2023-06-01",
+        "X-Claude-Code-Session-Id": state["log_session_id"],
+    }
     r = requests.post(f"{BASE_URL}/v1/messages", headers=headers, json={
         "model": "claude-opus-4-8",
         "max_tokens": 50,
@@ -363,24 +459,79 @@ def test_anthropic(api_key: str):
 
 
 # ---------------------------------------------------------------------------
+# End-of-suite teardown — delete what THIS run created. The e2e user
+# itself is NOT deleted here (server refuses self-delete); it is left for
+# the next run's pre_cleanup() to pick up.
+# ---------------------------------------------------------------------------
+def teardown(token: str):
+    section("Teardown (this run)")
+    H = {"Authorization": f"Bearer {token}"}
+
+    em_id = state.get("exposed_model_id")
+    em_name = state.get("exposed_model_name")
+    if em_id:
+        r = requests.delete(f"{BASE_URL}/api/exposed_model/{em_id}", headers=H, timeout=5)
+        check(f"teardown delete exposed_model '{em_name}' (id={em_id})",
+              r.status_code == 200, f"got {r.status_code}")
+
+    sid = state.get("log_session_id")
+    if DB_API_KEY:
+        print(f"  {YELLOW}— api_logs from upstream tests tagged session_id='{sid}'."
+              f" Purge with:{RESET}")
+        print(f"      docker exec llm_gateway_postgres psql -U postgres -d llm_gateway \\\n"
+              f"        -c \"DELETE FROM api_logs WHERE session_id = '{sid}';\"")
+    else:
+        print(f"  {YELLOW}— upstream tests skipped (no DB_API_KEY), no logs to clean{RESET}")
+
+    uname = state.get("e2e_username")
+    uid = state.get("e2e_user_id")
+    print(f"  {YELLOW}— e2e user '{uname}' (id={uid}) left in DB; next run's pre_cleanup"
+          f" will remove it (server forbids self-delete){RESET}")
+
+
+# ---------------------------------------------------------------------------
 # main
 # ---------------------------------------------------------------------------
 def main() -> int:
     print(f"E2E target: {BASE_URL}")
-    test_health()
-    test_v1_auth()
-    token = test_jwt_auth()
-    if not token:
-        print(f"{RED}FATAL: no JWT token, cannot continue admin tests{RESET}")
-        return 1
-    test_admin_crud(token)
-    test_logs_stats(token)
-    test_api_key(token)
-    if DB_API_KEY:
-        test_upstream(DB_API_KEY)
-        test_anthropic(DB_API_KEY)
-    else:
-        print(f"\n{YELLOW}Note: set DB_API_KEY env var to a real API key from the DB to run upstream tests{RESET}")
+    try:
+        test_health()
+        test_v1_auth()
+        token = test_jwt_auth()
+        if not token:
+            print(f"{RED}FATAL: no JWT token, cannot continue admin tests{RESET}")
+            return 1
+
+        # Self-heal: clean residue from prior runs (or from this run failing).
+        pre_cleanup(token)
+
+        test_admin_crud(token)
+        test_logs_stats(token)
+        test_api_key(token)
+        if DB_API_KEY:
+            test_upstream(DB_API_KEY)
+            test_anthropic(DB_API_KEY)
+        else:
+            print(f"\n{YELLOW}Note: set DB_API_KEY env var to a real API key from the DB to run upstream tests{RESET}")
+    finally:
+        if state.get("e2e_user_id"):
+            # Reuse the e2e token to do best-effort cleanup. The user itself
+            # can't be deleted this way (server enforces self-delete block);
+            # exposed_model and api_logs hint are handled in teardown().
+            # We need a fresh token because the e2e user's password may have
+            # been mutated mid-test (change_password flow).
+            try:
+                r = requests.post(f"{BASE_URL}/api/auth/login",
+                                  json={"username": state["e2e_username"],
+                                        "password": "e2e_jwt_pw_123"}, timeout=5)
+                if r.status_code == 200:
+                    t = (r.json().get("data") or {}).get("token") or ""
+                    if t:
+                        teardown(t)
+                else:
+                    print(f"\n{YELLOW}Teardown skipped — re-login failed (status {r.status_code}){RESET}")
+            except Exception as e:
+                print(f"\n{YELLOW}Teardown skipped — {e!r}{RESET}")
 
     print()
     print("─" * 60)
