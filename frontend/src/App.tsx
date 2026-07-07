@@ -11,6 +11,7 @@ import {
   LogoutOutlined,
   LockOutlined,
   ClusterOutlined,
+  TeamOutlined,
 } from '@ant-design/icons'
 import TokenStats from './TokenStats'
 import ConfigProvider from './ConfigProvider'
@@ -23,6 +24,8 @@ import Register from './Register'
 import ChangePassword from './ChangePassword'
 import Sessions from './Sessions'
 import SessionDetail from './SessionDetail'
+import UserManagement from './UserManagement'
+import TeamManagement from './TeamManagement'
 import { isAuthenticated, removeToken, getCurrentUser } from './api'
 
 const { Content } = Layout
@@ -36,6 +39,8 @@ const ALL_KEYS = [
   'route',
   'model',
   'api-keys',
+  'team',
+  'users',
 ] as const
 type PageKey = (typeof ALL_KEYS)[number]
 
@@ -50,16 +55,6 @@ function getHashRoute(): HashRoute {
   return { page: (page || null) as HashRoute['page'], id: rest.length ? rest.join('/') : undefined }
 }
 
-const menuItems = [
-  { key: 'logs', icon: <FileTextOutlined />, label: '请求日志' },
-  { key: 'sessions', icon: <ClusterOutlined />, label: '会话视图' },
-  { key: 'stats', icon: <BarChartOutlined />, label: 'Token 统计' },
-  { key: 'provider', icon: <ApiOutlined />, label: '大模型产商' },
-  { key: 'route', icon: <NodeIndexOutlined />, label: '模型路由' },
-  { key: 'model', icon: <AppstoreOutlined />, label: '模型列表' },
-  { key: 'api-keys', icon: <KeyOutlined />, label: 'API Key' },
-]
-
 const contentMap: Record<PageKey, React.ReactNode> = {
   logs: <LogViewer />,
   sessions: <Sessions />,
@@ -68,6 +63,8 @@ const contentMap: Record<PageKey, React.ReactNode> = {
   route: <ConfigRoute />,
   model: <ConfigExposedModel />,
   'api-keys': <ApiKeys />,
+  team: <TeamManagement />,
+  users: <UserManagement />,
 }
 
 const App = () => {
@@ -134,6 +131,28 @@ const App = () => {
   const openKeys: string[] = []
 
   const user = getCurrentUser()
+  const isAdmin = (user?.role ?? 99) <= 2
+  const roleLabel = ({ 1: '超级管理员', 2: '管理员', 3: '普通用户' } as Record<number, string>)[user?.role ?? 0] || ''
+
+  const menuItems = [
+    { key: 'logs', icon: <FileTextOutlined />, label: '请求日志' },
+    { key: 'sessions', icon: <ClusterOutlined />, label: '会话视图' },
+    { key: 'stats', icon: <BarChartOutlined />, label: 'Token 统计' },
+    ...(isAdmin
+      ? [
+          { key: 'provider' as const, icon: <ApiOutlined />, label: '大模型产商' },
+          { key: 'route' as const, icon: <NodeIndexOutlined />, label: '模型路由' },
+        ]
+      : []),
+    { key: 'model', icon: <AppstoreOutlined />, label: '模型列表' },
+    { key: 'api-keys', icon: <KeyOutlined />, label: 'API Key' },
+    ...(isAdmin
+      ? [
+          { key: 'team' as const, icon: <TeamOutlined />, label: '团队管理' },
+          { key: 'users' as const, icon: <UserOutlined />, label: '用户管理' },
+        ]
+      : []),
+  ]
 
   const userMenuItems = [
     {
@@ -194,7 +213,7 @@ const App = () => {
                 height: 'auto',
               }}
             >
-              {user?.username || 'User'}
+              {roleLabel ? `${user?.username || 'User'} (${roleLabel})` : (user?.username || 'User')}
             </Button>
           </Dropdown>
         </div>

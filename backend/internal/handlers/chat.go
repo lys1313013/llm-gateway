@@ -9,7 +9,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
-	"path"
+	"regexp"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -17,7 +17,8 @@ import (
 	"github.com/lys1313013/llm-gateway/backend/internal/config"
 	"github.com/lys1313013/llm-gateway/backend/internal/db"
 	hdrpkg "github.com/lys1313013/llm-gateway/backend/internal/headers"
-	"github.com/lys1313013/llm-gateway/backend/internal/models"
+	"github.com/lys1313013/llm-gateway/backend/internal/middleware"
+	gatewaymodels "github.com/lys1313013/llm-gateway/backend/internal/models"
 	"github.com/lys1313013/llm-gateway/backend/internal/proxy"
 )
 
@@ -38,13 +39,20 @@ func resolveSessionID(c *gin.Context) string {
 // ---------------------------------------------------------------------------
 
 func ListModels(c *gin.Context) {
-	models, err := db.GetActiveExposedModels(c.Request.Context())
+	var modelRecords []gatewaymodels.ExposedModel
+	var err error
+	if middleware.GetUserRole(c) == 1 {
+		modelRecords, err = db.GetActiveExposedModels(c.Request.Context())
+	} else {
+		teamID := middleware.GetTeamID(c)
+		modelRecords, err = db.GetActiveExposedModelsForTeam(c.Request.Context(), teamID)
+	}
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": gin.H{"message": err.Error()}})
 		return
 	}
-	data := make([]gin.H, 0, len(models))
-	for _, m := range models {
+	data := make([]gin.H, 0, len(modelRecords))
+	for _, m := range modelRecords {
 		data = append(data, gin.H{
 			"id":      m.ModelID,
 			"object":  "model",
@@ -93,7 +101,7 @@ func ChatCompletions(c *gin.Context) {
 
 	target := buildOpenAITargetURL(route.OpenAIBaseURL)
 
-	cfg := models.ProxyConfig{
+	cfg := gatewaymodels.ProxyConfig{
 		TargetURL:      target,
 		APIKey:         strDeref(route.APIKey),
 		Timeout:        route.Timeout,
@@ -105,6 +113,7 @@ func ChatCompletions(c *gin.Context) {
 		ProviderName:   strDeref(route.ProviderName),
 		RequestHeaders: hdrpkg.FromMap(collectHeaders(c.Request.Header)),
 		SessionID:      resolveSessionID(c),
+		UserID:         c.GetInt(middleware.CtxUserID),
 	}
 
 	status, headers, bodyRC, isStream, err := proxy.HandleOpenAI(c.Request.Context(), body, cfg)
@@ -180,7 +189,7 @@ func writeStream(c *gin.Context, status int, headers http.Header, body io.ReadCl
 	}
 }
 
-func matchOpenAIRoute(c *gin.Context, model string) *models.ModelRoute {
+func matchOpenAIRoute(c *gin.Context, model string) *gatewaymodels.ModelRoute {
 	routes, err := db.GetActiveRoutes(c.Request.Context())
 	if err != nil {
 		slog.Error("get active routes", "err", err)
@@ -191,7 +200,7 @@ func matchOpenAIRoute(c *gin.Context, model string) *models.ModelRoute {
 		if r.OpenAIBaseURL == nil || *r.OpenAIBaseURL == "" {
 			continue
 		}
-		matched, _ := path.Match(r.ModelPattern, model)
+		matched := matchModel(r.ModelPattern, model)
 		if matched {
 			return r
 		}
@@ -215,6 +224,21 @@ func strDeref(p *string, def ...string) string {
 		return def[0]
 	}
 	return ""
+}
+
+// matchModel reports whether model matches the given glob pattern.
+// Unlike path.Match, it treats '/' as an ordinary character so that
+// "tencent*" correctly matches "tencent/hy3:free".
+func matchModel(pattern, model string) bool {
+	// Convert glob to regex: escape everything then replace \* with .* and \? with .
+	escaped := regexp.QuoteMeta(pattern)
+	escaped = strings.ReplaceAll(escaped, `\*`, ".*")
+	escaped = strings.ReplaceAll(escaped, `\?`, ".")
+	re, err := regexp.Compile("^" + escaped + "$")
+	if err != nil {
+		return false
+	}
+	return re.MatchString(model)
 }
 
 func collectHeaders(h http.Header) map[string]string {
@@ -263,7 +287,7 @@ func AnthropicMessages(c *gin.Context) {
 	base := strings.TrimRight(strDeref(route.AnthropicBaseURL), "/")
 	target := base + "/v1/messages"
 
-	cfg := models.ProxyConfig{
+	cfg := gatewaymodels.ProxyConfig{
 		TargetURL:        target,
 		APIKey:           strDeref(route.APIKey),
 		Timeout:          route.Timeout,
@@ -276,6 +300,7 @@ func AnthropicMessages(c *gin.Context) {
 		ProviderName:     strDeref(route.ProviderName),
 		RequestHeaders:   hdrpkg.FromMap(collectHeaders(c.Request.Header)),
 		SessionID:        resolveSessionID(c),
+		UserID:           c.GetInt(middleware.CtxUserID),
 	}
 
 	status, headers, bodyRC, isStream, err := proxy.HandleAnthropic(c.Request.Context(), body, cfg)
@@ -304,7 +329,7 @@ func AnthropicMessages(c *gin.Context) {
 	c.Data(status, "application/json", respBody)
 }
 
-func matchAnthropicRoute(c *gin.Context, model string) *models.ModelRoute {
+func matchAnthropicRoute(c *gin.Context, model string) *gatewaymodels.ModelRoute {
 	routes, err := db.GetActiveRoutes(c.Request.Context())
 	if err != nil {
 		slog.Error("get active routes", "err", err)
@@ -315,7 +340,7 @@ func matchAnthropicRoute(c *gin.Context, model string) *models.ModelRoute {
 		if r.AnthropicBaseURL == nil || *r.AnthropicBaseURL == "" {
 			continue
 		}
-		matched, _ := path.Match(r.ModelPattern, model)
+		matched := matchModel(r.ModelPattern, model)
 		if matched {
 			return r
 		}

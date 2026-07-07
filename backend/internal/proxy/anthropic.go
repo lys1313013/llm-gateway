@@ -89,6 +89,7 @@ func HandleAnthropic(ctx context.Context, requestData []byte, cfg models.ProxyCo
 			ErrorMessage:     strPtr(fmt.Sprintf("Target API returned error: %d", resp.StatusCode)),
 			Protocol:         strPtr(cfg.Protocol),
 			SessionID:        strPtrOrNil(cfg.SessionID),
+			UserID:                   intPtrOrNil(cfg.UserID),
 		})
 
 		// Return Anthropic-format error
@@ -124,6 +125,7 @@ func HandleAnthropic(ctx context.Context, requestData []byte, cfg models.ProxyCo
 			requestHeaders:  cfg.RequestHeaders,
 			responseHeaders: hdrpkg.FromHTTPHeader(resp.Header),
 			sessionID:       cfg.SessionID,
+			userID:          cfg.UserID,
 		}
 		return resp.StatusCode, resp.Header, streamer, true, nil
 	}
@@ -164,6 +166,7 @@ func HandleAnthropic(ctx context.Context, requestData []byte, cfg models.ProxyCo
 		Protocol:                 strPtr(cfg.Protocol),
 		UsageData:                norm.Raw,
 		SessionID:                strPtrOrNil(cfg.SessionID),
+		UserID:                   intPtrOrNil(cfg.UserID),
 	})
 
 	return resp.StatusCode, nil, io.NopCloser(strings.NewReader(string(body))), false, nil
@@ -182,6 +185,7 @@ type anthropicStreamer struct {
 	requestHeaders  map[string]string
 	responseHeaders map[string]string
 	sessionID       string
+	userID          int
 
 	pending  []byte
 	finished bool
@@ -250,6 +254,7 @@ func (s *anthropicStreamer) finalize() {
 		Protocol:                 strPtr(s.protocol),
 		UsageData:                norm.Raw,
 		SessionID:                strPtrOrNil(s.sessionID),
+		UserID:                   intPtrOrNil(s.userID),
 	})
 }
 

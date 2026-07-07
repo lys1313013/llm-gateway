@@ -102,7 +102,8 @@ func initSchema(ctx context.Context) error {
 			usage_data JSONB,
 			cache_creation_input_tokens INTEGER,
 			cache_read_input_tokens INTEGER,
-			session_id VARCHAR(128)
+			session_id VARCHAR(128),
+			user_id INTEGER REFERENCES users(id) ON DELETE SET NULL
 		)`,
 		`CREATE TABLE IF NOT EXISTS model_route (
 			id SERIAL PRIMARY KEY,
@@ -133,6 +134,7 @@ func initSchema(ctx context.Context) error {
 			username VARCHAR(100) UNIQUE NOT NULL,
 			password_hash VARCHAR(255) NOT NULL,
 			is_active BOOLEAN DEFAULT TRUE,
+			role INTEGER NOT NULL DEFAULT 3,
 			created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
 			updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 		)`,
@@ -146,6 +148,12 @@ func initSchema(ctx context.Context) error {
 			is_active BOOLEAN DEFAULT TRUE,
 			created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
 			last_used_at TIMESTAMP WITH TIME ZONE
+		)`,
+		`CREATE TABLE IF NOT EXISTS team (
+			id SERIAL PRIMARY KEY,
+			name VARCHAR(100) UNIQUE NOT NULL,
+			create_time TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+			update_time TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_api_keys_key_hash ON api_keys(key_hash)`,
 	}
@@ -170,6 +178,10 @@ func initSchema(ctx context.Context) error {
 		`ALTER TABLE provider ADD COLUMN IF NOT EXISTS quota_url VARCHAR(255)`,
 		`ALTER TABLE provider ADD COLUMN IF NOT EXISTS quota_format VARCHAR(32)`,
 		`ALTER TABLE api_logs ADD COLUMN IF NOT EXISTS session_id VARCHAR(128)`,
+			`ALTER TABLE users ADD COLUMN IF NOT EXISTS role INTEGER NOT NULL DEFAULT 3`,
+			`ALTER TABLE api_logs ADD COLUMN IF NOT EXISTS user_id INTEGER REFERENCES users(id) ON DELETE SET NULL`,
+		`ALTER TABLE users ADD COLUMN IF NOT EXISTS team_id INTEGER REFERENCES team(id) ON DELETE SET NULL`,
+		`ALTER TABLE exposed_model ADD COLUMN IF NOT EXISTS team_id INTEGER REFERENCES team(id) ON DELETE SET NULL`,
 	}
 	for _, sql := range backfills {
 		if _, err := Pool.Exec(ctx, sql); err != nil {
@@ -182,6 +194,9 @@ func initSchema(ctx context.Context) error {
 	// is missing the column.
 	indexes := []string{
 		`CREATE INDEX IF NOT EXISTS idx_api_logs_session_id ON api_logs(session_id) WHERE session_id IS NOT NULL`,
+			`CREATE INDEX IF NOT EXISTS idx_api_logs_user_id_created_at ON api_logs(user_id, created_at DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_users_team_id ON users(team_id) WHERE team_id IS NOT NULL`,
+		`CREATE INDEX IF NOT EXISTS idx_exposed_model_team_id ON exposed_model(team_id) WHERE team_id IS NOT NULL`,
 	}
 	for _, sql := range indexes {
 		if _, err := Pool.Exec(ctx, sql); err != nil {

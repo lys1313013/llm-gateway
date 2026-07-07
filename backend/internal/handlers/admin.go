@@ -13,6 +13,8 @@ import (
 
 	"github.com/lys1313013/llm-gateway/backend/internal/config"
 	"github.com/lys1313013/llm-gateway/backend/internal/db"
+	"github.com/lys1313013/llm-gateway/backend/internal/middleware"
+	"github.com/lys1313013/llm-gateway/backend/internal/models"
 	"github.com/lys1313013/llm-gateway/backend/internal/quota"
 )
 
@@ -21,6 +23,10 @@ import (
 // ---------------------------------------------------------------------------
 
 func ListProviders(c *gin.Context) {
+	middleware.RequireAdmin(c)
+	if c.IsAborted() {
+		return
+	}
 	xs, err := db.GetProviders(c.Request.Context())
 	if err != nil {
 		serverError(c, err)
@@ -30,6 +36,10 @@ func ListProviders(c *gin.Context) {
 }
 
 func GetProvider(c *gin.Context) {
+	middleware.RequireAdmin(c)
+	if c.IsAborted() {
+		return
+	}
 	id, _ := strconv.Atoi(c.Param("id"))
 	p, err := db.GetProvider(c.Request.Context(), id)
 	if errors.Is(err, db.ErrNotFound) || p == nil {
@@ -44,6 +54,10 @@ func GetProvider(c *gin.Context) {
 }
 
 func CreateProvider(c *gin.Context) {
+	middleware.RequireAdmin(c)
+	if c.IsAborted() {
+		return
+	}
 	var in db.CreateProviderInput
 	if !bindJSON(c, &in) {
 		return
@@ -57,6 +71,10 @@ func CreateProvider(c *gin.Context) {
 }
 
 func UpdateProvider(c *gin.Context) {
+	middleware.RequireAdmin(c)
+	if c.IsAborted() {
+		return
+	}
 	id, _ := strconv.Atoi(c.Param("id"))
 	var in db.UpdateProviderInput
 	if !bindJSON(c, &in) {
@@ -71,6 +89,10 @@ func UpdateProvider(c *gin.Context) {
 }
 
 func DeleteProvider(c *gin.Context) {
+	middleware.RequireAdmin(c)
+	if c.IsAborted() {
+		return
+	}
 	id, _ := strconv.Atoi(c.Param("id"))
 	if err := db.DeleteProvider(c.Request.Context(), id); err != nil {
 		serverError(c, err)
@@ -83,6 +105,10 @@ func DeleteProvider(c *gin.Context) {
 // new-provider form. Order matches the file. An empty list is a valid
 // response — the UI just hides the preset selector.
 func ListProviderPresets(c *gin.Context) {
+	middleware.RequireAdmin(c)
+	if c.IsAborted() {
+		return
+	}
 	presets, err := config.LoadPresets()
 	if err != nil {
 		// A missing file is non-fatal: the UI just won't offer presets.
@@ -98,6 +124,10 @@ func ListProviderPresets(c *gin.Context) {
 // ---------------------------------------------------------------------------
 
 func ListRoutes(c *gin.Context) {
+	middleware.RequireAdmin(c)
+	if c.IsAborted() {
+		return
+	}
 	xs, err := db.GetRoutes(c.Request.Context())
 	if err != nil {
 		serverError(c, err)
@@ -107,6 +137,10 @@ func ListRoutes(c *gin.Context) {
 }
 
 func GetRoute(c *gin.Context) {
+	middleware.RequireAdmin(c)
+	if c.IsAborted() {
+		return
+	}
 	id, _ := strconv.Atoi(c.Param("id"))
 	r, err := db.GetRoute(c.Request.Context(), id)
 	if errors.Is(err, db.ErrNotFound) || r == nil {
@@ -121,6 +155,10 @@ func GetRoute(c *gin.Context) {
 }
 
 func CreateRoute(c *gin.Context) {
+	middleware.RequireAdmin(c)
+	if c.IsAborted() {
+		return
+	}
 	var in db.CreateRouteInput
 	if !bindJSON(c, &in) {
 		return
@@ -134,6 +172,10 @@ func CreateRoute(c *gin.Context) {
 }
 
 func UpdateRoute(c *gin.Context) {
+	middleware.RequireAdmin(c)
+	if c.IsAborted() {
+		return
+	}
 	id, _ := strconv.Atoi(c.Param("id"))
 	var in db.UpdateRouteInput
 	if !bindJSON(c, &in) {
@@ -148,6 +190,10 @@ func UpdateRoute(c *gin.Context) {
 }
 
 func DeleteRoute(c *gin.Context) {
+	middleware.RequireAdmin(c)
+	if c.IsAborted() {
+		return
+	}
 	id, _ := strconv.Atoi(c.Param("id"))
 	if err := db.DeleteRoute(c.Request.Context(), id); err != nil {
 		serverError(c, err)
@@ -161,10 +207,20 @@ func DeleteRoute(c *gin.Context) {
 // ---------------------------------------------------------------------------
 
 func ListExposedModels(c *gin.Context) {
-	xs, err := db.GetExposedModels(c.Request.Context())
+	var xs []models.ExposedModel
+	var err error
+	if middleware.GetUserRole(c) == 1 {
+		xs, err = db.GetExposedModels(c.Request.Context())
+	} else {
+		teamID := middleware.GetTeamID(c)
+		xs, err = db.GetExposedModelsForTeam(c.Request.Context(), teamID)
+	}
 	if err != nil {
 		serverError(c, err)
 		return
+	}
+	if xs == nil {
+		xs = []models.ExposedModel{}
 	}
 	ok(c, xs)
 }
@@ -184,6 +240,10 @@ func GetExposedModel(c *gin.Context) {
 }
 
 func CreateExposedModel(c *gin.Context) {
+	middleware.RequireAdmin(c)
+	if c.IsAborted() {
+		return
+	}
 	var in db.CreateExposedModelInput
 	if !bindJSON(c, &in) {
 		return
@@ -204,6 +264,10 @@ func CreateExposedModel(c *gin.Context) {
 }
 
 func UpdateExposedModel(c *gin.Context) {
+	middleware.RequireAdmin(c)
+	if c.IsAborted() {
+		return
+	}
 	id, _ := strconv.Atoi(c.Param("id"))
 	var in db.UpdateExposedModelInput
 	if !bindJSON(c, &in) {
@@ -218,6 +282,10 @@ func UpdateExposedModel(c *gin.Context) {
 }
 
 func DeleteExposedModel(c *gin.Context) {
+	middleware.RequireAdmin(c)
+	if c.IsAborted() {
+		return
+	}
 	id, _ := strconv.Atoi(c.Param("id"))
 	if err := db.DeleteExposedModel(c.Request.Context(), id); err != nil {
 		serverError(c, err)
@@ -227,6 +295,10 @@ func DeleteExposedModel(c *gin.Context) {
 }
 
 func UpdateExposedModelTestTime(c *gin.Context) {
+	middleware.RequireAdmin(c)
+	if c.IsAborted() {
+		return
+	}
 	id, _ := strconv.Atoi(c.Param("id"))
 	var in struct {
 		Protocol string `json:"protocol"`
@@ -256,6 +328,10 @@ func UpdateExposedModelTestTime(c *gin.Context) {
 // ListProviderQuotas returns the cached quota snapshot for every provider.
 // The frontend uses this for the top-of-page overview card.
 func ListProviderQuotas(c *gin.Context) {
+	middleware.RequireAdmin(c)
+	if c.IsAborted() {
+		return
+	}
 	providers, err := db.GetProviders(c.Request.Context())
 	if err != nil {
 		serverError(c, err)
@@ -278,6 +354,10 @@ func ListProviderQuotas(c *gin.Context) {
 
 // GetProviderQuota returns the cached snapshot for a single provider.
 func GetProviderQuota(c *gin.Context) {
+	middleware.RequireAdmin(c)
+	if c.IsAborted() {
+		return
+	}
 	id, _ := strconv.Atoi(c.Param("id"))
 	snap, cached := quota.Global().Cache.Get(id)
 	if !cached {
@@ -293,6 +373,10 @@ func GetProviderQuota(c *gin.Context) {
 // RefreshProviderQuota synchronously re-fetches quota for a single provider
 // and updates the cache. Uses the request context so the client can cancel.
 func RefreshProviderQuota(c *gin.Context) {
+	middleware.RequireAdmin(c)
+	if c.IsAborted() {
+		return
+	}
 	id, _ := strconv.Atoi(c.Param("id"))
 	p, err := db.GetProvider(c.Request.Context(), id)
 	if err != nil {
@@ -336,19 +420,24 @@ func ListLogs(c *gin.Context) {
 	if model == "" {
 		model = c.Query("model_name") // support both
 	}
+	userIDForFilter := 0
+	if middleware.GetUserRole(c) > 2 {
+		userIDForFilter = c.GetInt(middleware.CtxUserID)
+	}
 	filter := db.LogListFilter{
 		Limit:      limit,
 		Offset:     offset,
 		Model:      model,
 		Protocol:   protocol,
 		StatusCode: statusCode,
+		UserID:     userIDForFilter,
 	}
 	logs, err := db.GetLogs(c.Request.Context(), filter)
 	if err != nil {
 		serverError(c, err)
 		return
 	}
-	total, _ := db.GetLogCount(c.Request.Context(), filter.Model, filter.Protocol, filter.StatusCode)
+	total, _ := db.GetLogCount(c.Request.Context(), filter.Model, filter.Protocol, filter.StatusCode, userIDForFilter)
 	c.JSON(http.StatusOK, gin.H{"success": true, "data": logs, "total": total})
 }
 
@@ -360,7 +449,11 @@ func GetLogDetail(c *gin.Context) {
 		return
 	}
 	if log == nil {
-		c.JSON(http.StatusNotFound, gin.H{"success": false, "message": "Log not found"})
+		notFound(c, "Not found")
+		return
+	}
+	if middleware.GetUserRole(c) > 2 && log.UserID != nil && *log.UserID != c.GetInt(middleware.CtxUserID) {
+		notFound(c, "Not found")
 		return
 	}
 	// json.RawMessage already serializes as JSON; pass through.
@@ -370,6 +463,10 @@ func GetLogDetail(c *gin.Context) {
 // DeleteLog removes a single log row. Logs are append-only audit data, so
 // this is intended for cleanup of noisy / test runs, not routine use.
 func DeleteLog(c *gin.Context) {
+	middleware.RequireAdmin(c)
+	if c.IsAborted() {
+		return
+	}
 	id, _ := strconv.Atoi(c.Param("id"))
 	if id <= 0 {
 		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "invalid log id"})
@@ -475,6 +572,10 @@ func GetSession(c *gin.Context) {
 // itself is a grouping of api_logs by session_id, so deleting the session
 // is implemented as a cascade delete on that column.
 func DeleteSession(c *gin.Context) {
+	middleware.RequireAdmin(c)
+	if c.IsAborted() {
+		return
+	}
 	sessionID := c.Param("id")
 	if sessionID == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "session id required"})
@@ -509,7 +610,11 @@ func ListStatusCodes(c *gin.Context) {
 }
 
 func TodayStats(c *gin.Context) {
-	s, err := db.GetTodayStats(c.Request.Context())
+	userID := 0
+	if middleware.GetUserRole(c) > 2 {
+		userID = c.GetInt(middleware.CtxUserID)
+	}
+	s, err := db.GetTodayStats(c.Request.Context(), userID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": "Failed to get stats"})
 		return
@@ -527,15 +632,20 @@ func DailyTokenStats(c *gin.Context) {
 		endDate = time.Now().Format("2006-01-02")
 	}
 
+	userID := 0
+	if middleware.GetUserRole(c) > 2 {
+		userID = c.GetInt(middleware.CtxUserID)
+	}
+
 	single := startDate == endDate
 
 	if single {
-		hourly, err := db.GetHourlyTokenStats(c.Request.Context(), startDate)
+		hourly, err := db.GetHourlyTokenStats(c.Request.Context(), startDate, userID)
 		if err != nil {
 			serverError(c, err)
 			return
 		}
-		models, err := db.GetModelTokenStats(c.Request.Context(), startDate, endDate)
+		models, err := db.GetModelTokenStats(c.Request.Context(), startDate, endDate, userID)
 		if err != nil {
 			serverError(c, err)
 			return
@@ -552,12 +662,12 @@ func DailyTokenStats(c *gin.Context) {
 		return
 	}
 
-	daily, err := db.GetDailyTokenStats(c.Request.Context(), startDate, endDate)
+	daily, err := db.GetDailyTokenStats(c.Request.Context(), startDate, endDate, userID)
 	if err != nil {
 		serverError(c, err)
 		return
 	}
-	models, err := db.GetModelTokenStats(c.Request.Context(), startDate, endDate)
+	models, err := db.GetModelTokenStats(c.Request.Context(), startDate, endDate, userID)
 	if err != nil {
 		serverError(c, err)
 		return
@@ -571,6 +681,133 @@ func DailyTokenStats(c *gin.Context) {
 			"is_single_day": false,
 		},
 	})
+}
+
+// ---------------------------------------------------------------------------
+// Team CRUD
+// ---------------------------------------------------------------------------
+
+func ListTeams(c *gin.Context) {
+	middleware.RequireAdmin(c)
+	if c.IsAborted() {
+		return
+	}
+	xs, err := db.GetTeams(c.Request.Context())
+	if err != nil {
+		serverError(c, err)
+		return
+	}
+	ok(c, xs)
+}
+
+func GetTeam(c *gin.Context) {
+	middleware.RequireAdmin(c)
+	if c.IsAborted() {
+		return
+	}
+	id, _ := strconv.Atoi(c.Param("id"))
+	t, err := db.GetTeam(c.Request.Context(), id)
+	if errors.Is(err, db.ErrNotFound) || t == nil {
+		notFound(c, "团队不存在")
+		return
+	}
+	if err != nil {
+		serverError(c, err)
+		return
+	}
+	ok(c, t)
+}
+
+func CreateTeam(c *gin.Context) {
+	middleware.RequireRoot(c)
+	if c.IsAborted() {
+		return
+	}
+	var in db.CreateTeamInput
+	if !bindJSON(c, &in) {
+		return
+	}
+	t, err := db.CreateTeam(c.Request.Context(), in)
+	if err != nil {
+		serverError(c, err)
+		return
+	}
+	ok(c, t)
+}
+
+func UpdateTeam(c *gin.Context) {
+	middleware.RequireRoot(c)
+	if c.IsAborted() {
+		return
+	}
+	id, _ := strconv.Atoi(c.Param("id"))
+	var in db.UpdateTeamInput
+	if !bindJSON(c, &in) {
+		return
+	}
+	t, err := db.UpdateTeam(c.Request.Context(), id, in)
+	if err != nil {
+		serverError(c, err)
+		return
+	}
+	ok(c, t)
+}
+
+func DeleteTeam(c *gin.Context) {
+	middleware.RequireRoot(c)
+	if c.IsAborted() {
+		return
+	}
+	id, _ := strconv.Atoi(c.Param("id"))
+	if err := db.DeleteTeam(c.Request.Context(), id); err != nil {
+		serverError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true})
+}
+
+func UpdateUserTeam(c *gin.Context) {
+	middleware.RequireAdmin(c)
+	if c.IsAborted() {
+		return
+	}
+	userID, _ := strconv.Atoi(c.Param("user_id"))
+	currentRole := middleware.GetUserRole(c)
+	// 不能操作比自己权限高的用户
+	if currentRole != 1 {
+		target, err := db.GetUserByID(c.Request.Context(), userID)
+		if err != nil || target == nil {
+			c.JSON(http.StatusNotFound, gin.H{"success": false, "message": "用户不存在"})
+			return
+		}
+		if target.Role < currentRole {
+			c.JSON(http.StatusForbidden, gin.H{"success": false, "message": "不能越级操作"})
+			return
+		}
+	}
+	var in struct {
+		TeamID *int `json:"team_id"`
+	}
+	if !bindJSON(c, &in) {
+		return
+	}
+	// role=2（管理员）只能将用户分配到自己所在的团队
+	if currentRole == 2 {
+		adminTeamID := middleware.GetTeamID(c)
+		if adminTeamID == nil {
+			c.JSON(http.StatusForbidden, gin.H{"success": false, "message": "你尚未被分配到任何团队"})
+			return
+		}
+		if in.TeamID != nil && *in.TeamID != *adminTeamID {
+			c.JSON(http.StatusForbidden, gin.H{"success": false, "message": "只能将用户分配到自己所在的团队"})
+			return
+		}
+	}
+	if err := db.UpdateUserTeam(c.Request.Context(), userID, in.TeamID); err != nil {
+		serverError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true})
 }
 
 // ---------------------------------------------------------------------------

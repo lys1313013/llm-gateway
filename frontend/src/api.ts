@@ -32,13 +32,18 @@ export function isAuthenticated(): boolean {
   }
 }
 
-export function getCurrentUser(): { id: number; username: string } | null {
+export function getCurrentUser(): { id: number; username: string; role: number; team_id: number | null } | null {
   const token = getToken()
   if (!token) return null
   try {
     const parts = token.split('.')
     const payload = JSON.parse(atob(parts[1]))
-    return { id: Number(payload.sub), username: payload.username }
+    return {
+      id: Number(payload.sub_int || payload.sub),
+      username: payload.username,
+      role: Number(payload.role) || 3,
+      team_id: payload.team_id ?? null,
+    }
   } catch {
     return null
   }

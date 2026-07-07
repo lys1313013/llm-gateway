@@ -14,6 +14,8 @@ import (
 const (
 	CtxUserID   = "current_user_id"
 	CtxUsername = "current_username"
+	CtxUserRole = "current_user_role"
+	CtxTeamID   = "current_team_id"
 )
 
 // authWhitelist are the only paths allowed without any auth.
@@ -73,6 +75,8 @@ func applyJWT(c *gin.Context) {
 	}
 	c.Set(CtxUserID, claims.UserID)
 	c.Set(CtxUsername, claims.Username)
+	c.Set(CtxUserRole, claims.Role)
+	c.Set(CtxTeamID, claims.TeamID)
 	c.Next()
 }
 
@@ -141,9 +145,51 @@ func applyAPIKey(c *gin.Context) {
 
 	c.Set(CtxUserID, rec.UserID)
 	c.Set(CtxUsername, user.Username)
+	c.Set(CtxUserRole, user.Role)
+	c.Set(CtxTeamID, user.TeamID)
 	c.Next()
 }
 
 func abort(c *gin.Context, status int, body any) {
 	c.AbortWithStatusJSON(status, body)
+}
+
+// GetUserRole returns the role value from the Gin context. Returns 99 if not
+// set (99 > Common User=3, so all role gates reject unauthenticated access).
+func GetUserRole(c *gin.Context) int {
+	role, _ := c.Get(CtxUserRole)
+	if r, ok := role.(int); ok {
+		return r
+	}
+	return 99
+}
+
+// RequireAdmin aborts with 403 if the current user's role is above 2 (common user).
+func RequireAdmin(c *gin.Context) {
+	if GetUserRole(c) > 2 {
+		abort(c, http.StatusForbidden, gin.H{
+			"success": false,
+			"message": "权限不足：需要管理员权限",
+		})
+	}
+}
+
+// RequireRoot aborts with 403 if the current user's role is above 1 (non-root).
+func RequireRoot(c *gin.Context) {
+	if GetUserRole(c) > 1 {
+		abort(c, http.StatusForbidden, gin.H{
+			"success": false,
+			"message": "权限不足：需要超级管理员权限",
+		})
+	}
+}
+
+// GetTeamID returns the team ID pointer from the Gin context. Returns nil if
+// the user has no team or the value is not set.
+func GetTeamID(c *gin.Context) *int {
+	val, _ := c.Get(CtxTeamID)
+	if v, ok := val.(*int); ok {
+		return v
+	}
+	return nil
 }

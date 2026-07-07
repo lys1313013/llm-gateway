@@ -10,6 +10,7 @@ import (
 	"github.com/lys1313013/llm-gateway/backend/internal/auth"
 	"github.com/lys1313013/llm-gateway/backend/internal/db"
 	"github.com/lys1313013/llm-gateway/backend/internal/middleware"
+	"github.com/lys1313013/llm-gateway/backend/internal/models"
 )
 
 // ---------------------------------------------------------------------------
@@ -47,12 +48,12 @@ func Register(c *gin.Context) {
 		serverError(c, err)
 		return
 	}
-	user, err := db.CreateUser(c.Request.Context(), in.Username, hash)
+	user, err := db.CreateUser(c.Request.Context(), in.Username, hash, 3) // Common user
 	if err != nil {
 		serverError(c, err)
 		return
 	}
-	token, err := auth.GenerateJWT(user.ID, user.Username)
+	token, err := auth.GenerateJWT(user.ID, user.Username, user.Role, nil)
 	if err != nil {
 		serverError(c, err)
 		return
@@ -60,7 +61,7 @@ func Register(c *gin.Context) {
 	c.JSON(http.StatusCreated, gin.H{
 		"success": true,
 		"data": gin.H{
-			"user":  gin.H{"id": user.ID, "username": user.Username},
+			"user":  gin.H{"id": user.ID, "username": user.Username, "role": user.Role},
 			"token": token,
 		},
 	})
@@ -93,7 +94,7 @@ func Login(c *gin.Context) {
 		c.JSON(http.StatusForbidden, gin.H{"success": false, "message": "账号已被禁用"})
 		return
 	}
-	token, err := auth.GenerateJWT(user.ID, user.Username)
+	token, err := auth.GenerateJWT(user.ID, user.Username, user.Role, user.TeamID)
 	if err != nil {
 		serverError(c, err)
 		return
@@ -101,7 +102,7 @@ func Login(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"data": gin.H{
-			"user":  gin.H{"id": user.ID, "username": user.Username},
+			"user":  gin.H{"id": user.ID, "username": user.Username, "role": user.Role},
 			"token": token,
 		},
 	})
@@ -163,21 +164,103 @@ func ChangePassword(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"success": true, "message": "密码修改成功"})
 }
 
+func UpdateUserRole(c *gin.Context) {
+	middleware.RequireRoot(c)
+	if c.IsAborted() {
+		return
+	}
+	uid := c.GetInt(middleware.CtxUserID)
+	targetID, _ := parseIntParam(c, "user_id")
+	if targetID == uid {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "不能修改自己的角色"})
+		return
+	}
+	target, err := db.GetUserByID(c.Request.Context(), targetID)
+	if err != nil || target == nil {
+		c.JSON(http.StatusNotFound, gin.H{"success": false, "message": "用户不存在"})
+		return
+	}
+	if target.Role <= 1 {
+		c.JSON(http.StatusForbidden, gin.H{"success": false, "message": "不能修改超级管理员的角色"})
+		return
+	}
+	var in struct {
+		Role int `json:"role"`
+	}
+	if !bindJSON(c, &in) {
+		return
+	}
+	if in.Role != 2 && in.Role != 3 {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "角色值无效，只能设为 2（管理员）或 3（普通用户）"})
+		return
+	}
+	if err := db.UpdateUserRole(c.Request.Context(), targetID, in.Role); err != nil {
+		serverError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "message": "角色修改成功"})
+}
+
 func ListUsers(c *gin.Context) {
+	middleware.RequireAdmin(c)
+	if c.IsAborted() {
+		return
+	}
 	xs, err := db.GetUsers(c.Request.Context())
 	if err != nil {
 		serverError(c, err)
 		return
 	}
+	// role=2（管理员）只能看到自己团队的成员
+	if middleware.GetUserRole(c) == 2 {
+		adminTeamID := middleware.GetTeamID(c)
+		filtered := make([]models.User, 0)
+		for _, u := range xs {
+			if adminTeamID != nil && u.TeamID != nil && *u.TeamID == *adminTeamID {
+				filtered = append(filtered, u)
+			}
+		}
+		xs = filtered
+	}
 	ok(c, xs)
 }
 
 func RemoveUser(c *gin.Context) {
+	middleware.RequireAdmin(c)
+	if c.IsAborted() {
+		return
+	}
 	uid := c.GetInt(middleware.CtxUserID)
 	id, _ := parseIntParam(c, "user_id")
 	if id == uid {
 		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "不能删除自己"})
 		return
+	}
+	target, err := db.GetUserByID(c.Request.Context(), id)
+	if err != nil {
+		serverError(c, err)
+		return
+	}
+	if target == nil {
+		c.JSON(http.StatusNotFound, gin.H{"success": false, "message": "用户不存在"})
+		return
+	}
+	if target.Role <= 1 {
+		c.JSON(http.StatusForbidden, gin.H{"success": false, "message": "不能删除超级管理员"})
+		return
+	}
+	currentUser, _ := db.GetUserByID(c.Request.Context(), uid)
+	if currentUser != nil && currentUser.Role >= target.Role {
+		c.JSON(http.StatusForbidden, gin.H{"success": false, "message": "不能越级操作"})
+		return
+	}
+	// role=2（管理员）只能删除自己团队的成员
+	if middleware.GetUserRole(c) == 2 {
+		adminTeamID := middleware.GetTeamID(c)
+		if adminTeamID == nil || target.TeamID == nil || *target.TeamID != *adminTeamID {
+			c.JSON(http.StatusForbidden, gin.H{"success": false, "message": "只能删除自己团队的成员"})
+			return
+		}
 	}
 	if err := db.DeleteUser(c.Request.Context(), id); err != nil {
 		serverError(c, err)

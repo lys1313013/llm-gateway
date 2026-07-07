@@ -219,15 +219,19 @@ func pbkdf2(password, salt []byte, iter, keyLen int, h func() hash.Hash) []byte 
 type Claims struct {
 	UserID   int    `json:"sub_int"`
 	Username string `json:"username"`
+	Role     int    `json:"role"`
+	TeamID   *int   `json:"team_id,omitempty"`
 	jwt.RegisteredClaims
 }
 
-func GenerateJWT(userID int, username string) (string, error) {
+func GenerateJWT(userID int, username string, role int, teamID *int) (string, error) {
 	c := config.Get()
 	now := time.Now()
 	claims := Claims{
 		UserID:   userID,
 		Username: username,
+		Role:     role,
+		TeamID:   teamID,
 		RegisteredClaims: jwt.RegisteredClaims{
 			Subject:   fmt.Sprintf("%d", userID),
 			IssuedAt:  jwt.NewNumericDate(now),

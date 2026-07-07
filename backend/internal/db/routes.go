@@ -15,7 +15,7 @@ import (
 
 const routeSelectCols = `
 	r.id, r.model_pattern, r.route_type, r.provider_id, r.target_model,
-	r.timeout, r.log_requests, r.log_responses, r.priority, r.is_active,
+	r.timeout, COALESCE(r.log_requests, TRUE), COALESCE(r.log_responses, TRUE), r.priority, r.is_active,
 	r.create_time, r.update_time,
 	p.openai_base_url, p.anthropic_base_url, p.api_key, p.name
 `

@@ -12,6 +12,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/lys1313013/llm-gateway/backend/internal/middleware"
 	"github.com/lys1313013/llm-gateway/backend/internal/models"
 )
 
@@ -63,6 +64,10 @@ var defaultAnthropicModels = []string{
 // configured protocol. If both URLs are set, both are tested in parallel
 // and both are returned.
 func ProviderConnect(c *gin.Context) {
+	middleware.RequireAdmin(c)
+	if c.IsAborted() {
+		return
+	}
 	var in TestProviderInput
 	if !bindJSON(c, &in) {
 		return

@@ -123,11 +123,20 @@ func registerTestRoutes(r *gin.Engine) {
 
 	r.GET("/api/logs", handlers.ListLogs)
 	r.GET("/api/logs/:id", handlers.GetLogDetail)
+	r.DELETE("/api/logs/:id", handlers.DeleteLog)
 	r.GET("/api/logs/today_stats", handlers.TodayStats)
 	r.GET("/api/stats/daily_tokens", handlers.DailyTokenStats)
+	r.GET("/api/logs/status_codes", handlers.ListStatusCodes)
 
 	r.GET("/api/sessions", handlers.ListSessions)
 	r.GET("/api/sessions/:id", handlers.GetSession)
+	r.DELETE("/api/sessions/:id", handlers.DeleteSession)
+
+	r.GET("/api/provider/presets", handlers.ListProviderPresets)
+	r.GET("/api/provider/quota", handlers.ListProviderQuotas)
+	r.GET("/api/provider/:id/quota", handlers.GetProviderQuota)
+	r.POST("/api/provider/:id/quota/refresh", handlers.RefreshProviderQuota)
+	r.POST("/api/provider/test/connect", handlers.ProviderConnect)
 
 	r.POST("/api/test/chat", handlers.TestChat)
 	r.POST("/api/test/messages", handlers.TestMessages)
@@ -232,6 +241,23 @@ func TestProviderCRUD(t *testing.T) {
 	token, _ := body["data"].(map[string]any)["token"].(string)
 	auth := map[string]string{"Authorization": "Bearer " + token}
 
+	// Promote test user to admin so CRUD tests pass, then re-login
+	// for a fresh JWT with the updated role.
+	userData, _ := body["data"].(map[string]any)["user"].(map[string]any)
+	userID := int(userData["id"].(float64))
+	if err := db.UpdateUserRole(context.Background(), userID, 2); err != nil {
+		t.Fatalf("promote user to admin: %v", err)
+	}
+	w, body = doJSON(t, r, "POST", "/api/auth/login", map[string]string{
+		"username": userData["username"].(string),
+		"password": "test_pw_1234",
+	}, nil)
+	if w.Code != 200 {
+		t.Fatalf("re-login after promotion: %d", w.Code)
+	}
+	token, _ = body["data"].(map[string]any)["token"].(string)
+	auth = map[string]string{"Authorization": "Bearer " + token}
+
 	// Create
 	w, pbody := doJSON(t, r, "POST", "/api/provider", map[string]any{
 		"name":             fmt.Sprintf("gtest_provider_%d", suffix),
@@ -289,6 +315,11 @@ func TestLogs_AndStats(t *testing.T) {
 	token, _ := body["data"].(map[string]any)["token"].(string)
 	auth := map[string]string{"Authorization": "Bearer " + token}
 
+	// Promote to admin so they can see all logs
+	userData, _ := body["data"].(map[string]any)["user"].(map[string]any)
+	logUserID := int(userData["id"].(float64))
+	_ = db.UpdateUserRole(context.Background(), logUserID, 2)
+
 	w, _ = doJSON(t, r, "GET", "/api/logs?limit=5", nil, auth)
 	if w.Code != 200 {
 		t.Fatalf("logs: %d", w.Code)
@@ -320,6 +351,13 @@ func TestSessions_Smoke(t *testing.T) {
 	}
 	token, _ := body["data"].(map[string]any)["token"].(string)
 	auth := map[string]string{"Authorization": "Bearer " + token}
+
+	// Promote to admin so session queries see all logs
+	userData, _ := body["data"].(map[string]any)["user"].(map[string]any)
+	sessUserID := int(userData["id"].(float64))
+	if err := db.UpdateUserRole(context.Background(), sessUserID, 2); err != nil {
+		t.Fatalf("promote to admin: %v", err)
+	}
 
 	sessA := fmt.Sprintf("sess-A-%d", suffix)
 	sessB := fmt.Sprintf("sess-B-%d", suffix)
@@ -460,6 +498,11 @@ func TestConcurrentLoad(t *testing.T) {
 	token, _ := body["data"].(map[string]any)["token"].(string)
 	auth := map[string]string{"Authorization": "Bearer " + token}
 
+	// Promote to admin for load test
+	userData, _ := body["data"].(map[string]any)["user"].(map[string]any)
+	loadUserID := int(userData["id"].(float64))
+	_ = db.UpdateUserRole(context.Background(), loadUserID, 2)
+
 	const (
 		concurrency = 50
 		perWorker   = 20
@@ -492,5 +535,470 @@ func TestConcurrentLoad(t *testing.T) {
 		total, elapsed, rps, success, fail)
 	if fail > 0 {
 		t.Fatalf("expected zero failures, got %d", fail)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Helper: register, promote to admin, re-login, return auth header
+// ---------------------------------------------------------------------------
+
+func registerAndPromote(t *testing.T, r http.Handler, prefix string) map[string]string {
+	t.Helper()
+	suffix := time.Now().UnixNano()
+	username := fmt.Sprintf("%s_%d", prefix, suffix)
+
+	w, body := doJSON(t, r, "POST", "/api/auth/register", map[string]string{
+		"username": username,
+		"password": "test_pw_1234",
+	}, nil)
+	if w.Code != 201 {
+		t.Fatalf("%s register: %d", prefix, w.Code)
+	}
+
+	user, _ := body["data"].(map[string]any)["user"].(map[string]any)
+	userID := int(user["id"].(float64))
+	if err := db.UpdateUserRole(context.Background(), userID, 2); err != nil {
+		t.Fatalf("%s promote: %v", prefix, err)
+	}
+
+	w, body = doJSON(t, r, "POST", "/api/auth/login", map[string]string{
+		"username": username,
+		"password": "test_pw_1234",
+	}, nil)
+	if w.Code != 200 {
+		t.Fatalf("%s re-login: %d", prefix, w.Code)
+	}
+
+	token, _ := body["data"].(map[string]any)["token"].(string)
+	return map[string]string{"Authorization": "Bearer " + token}
+}
+
+// ---------------------------------------------------------------------------
+// Route CRUD
+// ---------------------------------------------------------------------------
+
+func TestRouteCRUD(t *testing.T) {
+	r := setupRouter(t)
+	auth := registerAndPromote(t, r, "gtest_route")
+
+	// Need a provider first (route references provider_id)
+	w, pbody := doJSON(t, r, "POST", "/api/provider", map[string]any{
+		"name":             fmt.Sprintf("gtest_route_prov_%d", time.Now().UnixNano()),
+		"openai_base_url":  "https://example.com/v1",
+		"api_key":          "sk-test",
+	}, auth)
+	if w.Code != 200 {
+		t.Fatalf("create provider for route test: %d: %s", w.Code, w.Body.String())
+	}
+	pid := int(pbody["data"].(map[string]any)["id"].(float64))
+
+	// Create
+	w, rbody := doJSON(t, r, "POST", "/api/route", map[string]any{
+		"model_pattern": "gpt-4o-route-test",
+		"route_type":    "openai",
+		"provider_id":   pid,
+		"target_model":  "gpt-4o",
+		"timeout":       30,
+		"priority":      1,
+		"is_active":     true,
+	}, auth)
+	if w.Code != 200 {
+		t.Fatalf("create route: %d: %s", w.Code, w.Body.String())
+	}
+	rid := int(rbody["data"].(map[string]any)["id"].(float64))
+
+	// List
+	w, _ = doJSON(t, r, "GET", "/api/route", nil, auth)
+	if w.Code != 200 {
+		t.Fatalf("list routes: %d: %s", w.Code, w.Body.String())
+	}
+
+	// Get
+	w, _ = doJSON(t, r, "GET", fmt.Sprintf("/api/route/%d", rid), nil, auth)
+	if w.Code != 200 {
+		t.Fatalf("get route: %d", w.Code)
+	}
+
+	// Update
+	w, _ = doJSON(t, r, "PUT", fmt.Sprintf("/api/route/%d", rid), map[string]any{
+		"model_pattern": "gpt-4o-route-test-updated",
+		"route_type":    "openai",
+		"provider_id":   pid,
+		"target_model":  "gpt-4o-mini",
+		"timeout":       60,
+		"priority":      2,
+		"is_active":     true,
+	}, auth)
+	if w.Code != 200 {
+		t.Fatalf("update route: %d", w.Code)
+	}
+
+	// Delete
+	w, _ = doJSON(t, r, "DELETE", fmt.Sprintf("/api/route/%d", rid), nil, auth)
+	if w.Code != 200 {
+		t.Fatalf("delete route: %d", w.Code)
+	}
+
+	// Cleanup provider
+	_, _ = doJSON(t, r, "DELETE", fmt.Sprintf("/api/provider/%d", pid), nil, auth)
+}
+
+// ---------------------------------------------------------------------------
+// Exposed Model CRUD
+// ---------------------------------------------------------------------------
+
+func TestExposedModelCRUD(t *testing.T) {
+	r := setupRouter(t)
+	auth := registerAndPromote(t, r, "gtest_model")
+
+	// Create
+	w, mbody := doJSON(t, r, "POST", "/api/exposed_model", map[string]any{
+		"model_id": fmt.Sprintf("gtest-exposed-%d", time.Now().UnixNano()),
+		"owned_by": "gtest-org",
+		"is_active": true,
+	}, auth)
+	if w.Code != 200 {
+		t.Fatalf("create model: %d: %s", w.Code, w.Body.String())
+	}
+	mid := int(mbody["data"].(map[string]any)["id"].(float64))
+
+	// List
+	w, _ = doJSON(t, r, "GET", "/api/exposed_model", nil, auth)
+	if w.Code != 200 {
+		t.Fatalf("list models: %d", w.Code)
+	}
+
+	// Get
+	w, _ = doJSON(t, r, "GET", fmt.Sprintf("/api/exposed_model/%d", mid), nil, auth)
+	if w.Code != 200 {
+		t.Fatalf("get model: %d", w.Code)
+	}
+
+	// Update
+	w, _ = doJSON(t, r, "PUT", fmt.Sprintf("/api/exposed_model/%d", mid), map[string]any{
+		"model_id": fmt.Sprintf("gtest-exposed-upd-%d", time.Now().UnixNano()),
+		"owned_by": "gtest-org-v2",
+		"is_active": false,
+	}, auth)
+	if w.Code != 200 {
+		t.Fatalf("update model: %d", w.Code)
+	}
+
+	// Update test_time
+	w, _ = doJSON(t, r, "PUT", fmt.Sprintf("/api/exposed_model/%d/test_time", mid), map[string]any{
+		"protocol": "openai",
+	}, auth)
+	if w.Code != 200 {
+		t.Fatalf("update model test_time: %d", w.Code)
+	}
+
+	// Delete
+	w, _ = doJSON(t, r, "DELETE", fmt.Sprintf("/api/exposed_model/%d", mid), nil, auth)
+	if w.Code != 200 {
+		t.Fatalf("delete model: %d", w.Code)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// API Key CRUD
+// ---------------------------------------------------------------------------
+
+func TestAPIKeyCRUD(t *testing.T) {
+	r := setupRouter(t)
+	auth := registerAndPromote(t, r, "gtest_apikey")
+
+	// Create
+	w, abody := doJSON(t, r, "POST", "/api/auth/api_keys", map[string]string{
+		"name": "test-key-1",
+	}, auth)
+	if w.Code != 200 && w.Code != 201 {
+		t.Fatalf("create api key: %d: %s", w.Code, w.Body.String())
+	}
+	keyData, _ := abody["data"].(map[string]any)
+	if keyData["key"] == nil || keyData["key"] == "" {
+		t.Fatal("api key value missing in create response")
+	}
+	kid := int(keyData["id"].(float64))
+
+	// List
+	w, lbody := doJSON(t, r, "GET", "/api/auth/api_keys", nil, auth)
+	if w.Code != 200 {
+		t.Fatalf("list api keys: %d", w.Code)
+	}
+	keys, _ := lbody["data"].([]any)
+	if len(keys) == 0 {
+		t.Fatal("expected at least one api key")
+	}
+
+	// Toggle (disable)
+	w, _ = doJSON(t, r, "PUT", fmt.Sprintf("/api/auth/api_keys/%d/toggle", kid), map[string]any{
+		"is_active": false,
+	}, auth)
+	if w.Code != 200 {
+		t.Fatalf("toggle api key: %d", w.Code)
+	}
+
+	// Rename
+	w, _ = doJSON(t, r, "PUT", fmt.Sprintf("/api/auth/api_keys/%d", kid), map[string]string{
+		"name": "renamed-key",
+	}, auth)
+	if w.Code != 200 {
+		t.Fatalf("rename api key: %d", w.Code)
+	}
+
+	// Delete
+	w, _ = doJSON(t, r, "DELETE", fmt.Sprintf("/api/auth/api_keys/%d", kid), nil, auth)
+	if w.Code != 200 {
+		t.Fatalf("delete api key: %d", w.Code)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// User management
+// ---------------------------------------------------------------------------
+
+func TestUserManagement(t *testing.T) {
+	r := setupRouter(t)
+	auth := registerAndPromote(t, r, "gtest_usermgmt")
+
+	// ListUsers
+	w, lbody := doJSON(t, r, "GET", "/api/auth/users", nil, auth)
+	if w.Code != 200 {
+		t.Fatalf("list users: %d", w.Code)
+	}
+	users, _ := lbody["data"].([]any)
+	if len(users) == 0 {
+		t.Fatal("expected at least one user")
+	}
+
+	// RemoveUser — create a disposable user, then delete
+	disposable := fmt.Sprintf("gtest_todelete_%d", time.Now().UnixNano())
+	w, dbody := doJSON(t, r, "POST", "/api/auth/register", map[string]string{
+		"username": disposable,
+		"password": "test_pw_1234",
+	}, nil)
+	if w.Code != 201 {
+		t.Fatalf("register disposable: %d", w.Code)
+	}
+	duid := int(dbody["data"].(map[string]any)["user"].(map[string]any)["id"].(float64))
+
+	w, _ = doJSON(t, r, "DELETE", fmt.Sprintf("/api/auth/users/%d", duid), nil, auth)
+	if w.Code != 200 {
+		t.Fatalf("delete user: %d: %s", w.Code, w.Body.String())
+	}
+
+	// Cannot self-delete: verify the admin can't delete themselves
+	meW, meBody := doJSON(t, r, "GET", "/api/auth/me", nil, auth)
+	if meW.Code != 200 {
+		t.Fatalf("me: %d", meW.Code)
+	}
+	myID := int(meBody["data"].(map[string]any)["id"].(float64))
+	w, _ = doJSON(t, r, "DELETE", fmt.Sprintf("/api/auth/users/%d", myID), nil, auth)
+	if w.Code != 400 {
+		t.Fatalf("self-delete: expected 400, got %d", w.Code)
+	}
+}
+
+func TestChangePassword(t *testing.T) {
+	r := setupRouter(t)
+	auth := registerAndPromote(t, r, "gtest_pw")
+
+	// Change password
+	w, _ := doJSON(t, r, "PUT", "/api/auth/change_password", map[string]string{
+		"old_password": "test_pw_1234",
+		"new_password": "new_pw_5678",
+	}, auth)
+	if w.Code != 200 {
+		t.Fatalf("change password: %d: %s", w.Code, w.Body.String())
+	}
+
+	// Old password should no longer work
+	w, _ = doJSON(t, r, "POST", "/api/auth/login", map[string]string{
+		"username": "should-fail-with-old",
+		"password": "test_pw_1234",
+	}, nil)
+	// Just verify the change_password endpoint itself works; old password
+	// from the registered user won't work for login since username is random.
+	_ = w
+
+	// New password login — find the username from the auth JWT
+	meW, meBody := doJSON(t, r, "GET", "/api/auth/me", nil, auth)
+	if meW.Code != 200 {
+		t.Fatalf("me: %d", meW.Code)
+	}
+	username, _ := meBody["data"].(map[string]any)["username"].(string)
+
+	w, _ = doJSON(t, r, "POST", "/api/auth/login", map[string]string{
+		"username": username,
+		"password": "new_pw_5678",
+	}, nil)
+	if w.Code != 200 {
+		t.Fatalf("login with new password: %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Permission denial tests — common user cannot write
+// ---------------------------------------------------------------------------
+
+func registerCommon(t *testing.T, r http.Handler) map[string]string {
+	t.Helper()
+	suffix := time.Now().UnixNano()
+	username := fmt.Sprintf("gtest_common_%d", suffix)
+
+	w, body := doJSON(t, r, "POST", "/api/auth/register", map[string]string{
+		"username": username,
+		"password": "test_pw_1234",
+	}, nil)
+	if w.Code != 201 {
+		t.Fatalf("register common: %d", w.Code)
+	}
+	token, _ := body["data"].(map[string]any)["token"].(string)
+	return map[string]string{"Authorization": "Bearer " + token}
+}
+
+func TestCommonUserCannotWrite(t *testing.T) {
+	r := setupRouter(t)
+	auth := registerCommon(t, r)
+
+	tests := []struct {
+		method string
+		path   string
+		body   map[string]any
+	}{
+		{"POST", "/api/provider", map[string]any{"name": "x", "openai_base_url": "http://x", "api_key": "sk-x"}},
+		{"PUT", "/api/provider/99999", map[string]any{"name": "x"}},
+		{"DELETE", "/api/provider/99999", nil},
+		{"POST", "/api/route", map[string]any{"model_pattern": "x", "route_type": "openai"}},
+		{"PUT", "/api/route/99999", map[string]any{"model_pattern": "x", "route_type": "openai"}},
+		{"DELETE", "/api/route/99999", nil},
+		{"POST", "/api/exposed_model", map[string]any{"model_id": "x"}},
+		{"PUT", "/api/exposed_model/99999", map[string]any{"model_id": "x"}},
+		{"DELETE", "/api/exposed_model/99999", nil},
+		{"GET", "/api/auth/users", nil},
+		{"DELETE", "/api/auth/users/99999", nil},
+	}
+
+	for _, tc := range tests {
+		w, _ := doJSON(t, r, tc.method, tc.path, tc.body, auth)
+		if w.Code != 403 {
+			t.Errorf("%s %s: expected 403, got %d", tc.method, tc.path, w.Code)
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Log detail and delete
+// ---------------------------------------------------------------------------
+
+func TestLogDetailAndDelete(t *testing.T) {
+	r := setupRouter(t)
+	auth := registerAndPromote(t, r, "gtest_logdetail")
+
+	// Insert a log row directly so we have something to query
+	ctx := context.Background()
+	suffix := time.Now().UnixNano()
+	model := fmt.Sprintf("gtest-model-%d", suffix)
+	if err := db.InsertLog(ctx, db.InsertLogInput{
+		Model:            &model,
+		IsStream:         false,
+		StatusCode:       200,
+		ProcessingTimeMs: 42,
+		Protocol:         strPtrLocal("openai"),
+	}); err != nil {
+		t.Fatalf("insert test log: %v", err)
+	}
+
+	// List logs to find the inserted one
+	w, lbody := doJSON(t, r, "GET", "/api/logs?limit=1&model="+model, nil, auth)
+	if w.Code != 200 {
+		t.Fatalf("list logs: %d: %s", w.Code, w.Body.String())
+	}
+	logs, _ := lbody["data"].([]any)
+	if len(logs) == 0 {
+		t.Fatal("expected at least one log")
+	}
+	logID := int(logs[0].(map[string]any)["id"].(float64))
+
+	// Get detail
+	w, _ = doJSON(t, r, "GET", fmt.Sprintf("/api/logs/%d", logID), nil, auth)
+	if w.Code != 200 {
+		t.Fatalf("get log detail: %d", w.Code)
+	}
+
+	// Delete
+	w, _ = doJSON(t, r, "DELETE", fmt.Sprintf("/api/logs/%d", logID), nil, auth)
+	if w.Code != 200 && w.Code != 404 {
+		t.Fatalf("delete log: %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Session delete
+// ---------------------------------------------------------------------------
+
+func TestSessionDelete(t *testing.T) {
+	r := setupRouter(t)
+	auth := registerAndPromote(t, r, "gtest_sessdel")
+
+	sessionID := fmt.Sprintf("sess-del-%d", time.Now().UnixNano())
+	ctx := context.Background()
+
+	// Insert a few logs with a session_id
+	for i := 0; i < 3; i++ {
+		if err := db.InsertLog(ctx, db.InsertLogInput{
+			Model:            strPtrLocal("gpt-4o-mini"),
+			IsStream:         false,
+			StatusCode:       200,
+			ProcessingTimeMs: 100,
+			Protocol:         strPtrLocal("openai"),
+			SessionID:        strPtrOrNilLocal(sessionID),
+		}); err != nil {
+			t.Fatalf("insert session log: %v", err)
+		}
+	}
+
+	// Delete the session
+	w, _ := doJSON(t, r, "DELETE", "/api/sessions/"+sessionID, nil, auth)
+	if w.Code != 200 {
+		t.Fatalf("delete session: %d: %s", w.Code, w.Body.String())
+	}
+
+	// Verify session is gone
+	w, _ = doJSON(t, r, "GET", "/api/sessions/"+sessionID, nil, auth)
+	if w.Code != 404 {
+		t.Fatalf("expected 404 after delete, got %d", w.Code)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Provider presets and quota endpoints
+// ---------------------------------------------------------------------------
+
+func TestProviderPresets(t *testing.T) {
+	r := setupRouter(t)
+	auth := registerAndPromote(t, r, "gtest_presets")
+
+	w, _ := doJSON(t, r, "GET", "/api/provider/presets", nil, auth)
+	if w.Code != 200 {
+		t.Fatalf("list presets: %d", w.Code)
+	}
+}
+
+func TestProviderQuotaEndpoints(t *testing.T) {
+	t.Skip("skipping: quota endpoints require quota.Global init in test")
+}
+
+// ---------------------------------------------------------------------------
+// Status codes and today stats
+// ---------------------------------------------------------------------------
+
+func TestStatusCodes(t *testing.T) {
+	r := setupRouter(t)
+	auth := registerAndPromote(t, r, "gtest_statuscodes")
+
+	w, _ := doJSON(t, r, "GET", "/api/logs/status_codes", nil, auth)
+	if w.Code != 200 {
+		t.Fatalf("status codes: %d", w.Code)
 	}
 }

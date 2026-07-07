@@ -43,6 +43,7 @@ docker-compose -f docker-compose.db.yml up -d
 
 # 2. 启动后端（默认端口 5001）
 cd backend
+
 go run ./cmd/gateway
 
 # 3. 启动管理后台（开发模式，端口 18888）

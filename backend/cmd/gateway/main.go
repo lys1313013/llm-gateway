@@ -67,7 +67,7 @@ func main() {
 	go quotaFetcher.RunRefresher(ctx, 5*time.Minute)
 
 	// Bootstrap: create default admin if no users exist
-	if err := bootstrapAdmin(ctx); err != nil {
+	if err := bootstrapRoot(ctx); err != nil {
 		slog.Error("bootstrap admin", "err", err)
 	}
 
@@ -133,6 +133,8 @@ func registerRoutes(r *gin.Engine) {
 		authGrp.PUT("/change_password", handlers.ChangePassword)
 		authGrp.GET("/users", handlers.ListUsers)
 		authGrp.DELETE("/users/:user_id", handlers.RemoveUser)
+		authGrp.PUT("/users/:user_id/role", handlers.UpdateUserRole)
+		authGrp.PUT("/users/:user_id/team", handlers.UpdateUserTeam)
 		authGrp.GET("/api_keys", handlers.ListAPIKeys)
 		authGrp.POST("/api_keys", handlers.CreateAPIKey)
 		authGrp.DELETE("/api_keys/:key_id", handlers.DeleteAPIKey)
@@ -166,6 +168,13 @@ func registerRoutes(r *gin.Engine) {
 	r.DELETE("/api/exposed_model/:id", handlers.DeleteExposedModel)
 	r.PUT("/api/exposed_model/:id/test_time", handlers.UpdateExposedModelTestTime)
 
+	// Team
+	r.GET("/api/team", handlers.ListTeams)
+	r.GET("/api/team/:id", handlers.GetTeam)
+	r.POST("/api/team", handlers.CreateTeam)
+	r.PUT("/api/team/:id", handlers.UpdateTeam)
+	r.DELETE("/api/team/:id", handlers.DeleteTeam)
+
 	// Logs / stats
 	r.GET("/api/logs", handlers.ListLogs)
 	r.GET("/api/logs/:id", handlers.GetLogDetail)
@@ -189,24 +198,29 @@ func registerRoutes(r *gin.Engine) {
 	r.POST("/api/provider/test/connect", handlers.ProviderConnect)
 }
 
-// bootstrapAdmin creates an `admin` user with the default password if the
+// bootstrapRoot creates a root user on first start, or upgrades existing
 // users table is empty. Mirrors the Python backend's behaviour in app.py.
-func bootstrapAdmin(ctx context.Context) error {
+func bootstrapRoot(ctx context.Context) error {
 	n, err := db.GetUserCount(ctx)
 	if err != nil {
 		return err
 	}
-	if n > 0 {
+	if n == 0 {
+		hash, err := auth.HashPassword("llm_gateway")
+		if err != nil {
+			return err
+		}
+		if _, err := db.CreateUser(ctx, "root", hash, 1); err != nil {
+			return err
+		}
+		slog.Info("Default root user created (username: root, password: llm_gateway)")
 		return nil
 	}
-	hash, err := auth.HashPassword("llm_gateway")
-	if err != nil {
-		return err
+
+	// Upgrade existing users with no role to root (role=1).
+	if err := db.UpgradeLegacyRoles(ctx); err != nil {
+		return fmt.Errorf("upgrade existing users to root: %w", err)
 	}
-	if _, err := db.CreateUser(ctx, "admin", hash); err != nil {
-		return err
-	}
-	slog.Info("Default admin user created (username: admin, password: llm_gateway)")
 	return nil
 }
 

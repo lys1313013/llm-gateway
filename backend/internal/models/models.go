@@ -44,14 +44,23 @@ type ModelRoute struct {
 }
 
 type ExposedModel struct {
-	ID                   int        `json:"id"`
-	ModelID              string     `json:"model_id"`
-	OwnedBy              string     `json:"owned_by"`
-	IsActive             bool       `json:"is_active"`
-	LastOpenAITestTime   *time.Time `json:"last_openai_test_time,omitempty"`
+	ID                    int        `json:"id"`
+	ModelID               string     `json:"model_id"`
+	OwnedBy               string     `json:"owned_by"`
+	IsActive              bool       `json:"is_active"`
+	TeamID                *int       `json:"team_id,omitempty"`
+	TeamName              string     `json:"team_name,omitempty"`
+	LastOpenAITestTime    *time.Time `json:"last_openai_test_time,omitempty"`
 	LastAnthropicTestTime *time.Time `json:"last_anthropic_test_time,omitempty"`
-	CreateTime           time.Time  `json:"create_time"`
-	UpdateTime           time.Time  `json:"update_time"`
+	CreateTime            time.Time  `json:"create_time"`
+	UpdateTime            time.Time  `json:"update_time"`
+}
+
+type Team struct {
+	ID         int       `json:"id"`
+	Name       string    `json:"name"`
+	CreateTime time.Time `json:"create_time"`
+	UpdateTime time.Time `json:"update_time"`
 }
 
 type User struct {
@@ -59,6 +68,9 @@ type User struct {
 	Username     string    `json:"username"`
 	PasswordHash string    `json:"-"`
 	IsActive     bool      `json:"is_active"`
+	Role         int       `json:"role"`
+	TeamID       *int      `json:"team_id,omitempty"`
+	TeamName     string    `json:"team_name,omitempty"`
 	CreatedAt    time.Time `json:"created_at"`
 	UpdatedAt    time.Time `json:"updated_at"`
 }
@@ -100,6 +112,7 @@ type APILog struct {
 	CacheCreationInputTokens *int          `json:"cache_creation_input_tokens,omitempty"`
 	CacheReadInputTokens   *int            `json:"cache_read_input_tokens,omitempty"`
 	SessionID              *string         `json:"session_id,omitempty"`
+	UserID                 *int            `json:"user_id,omitempty"`
 }
 
 // ---------------------------------------------------------------------------
@@ -124,6 +137,9 @@ type ProxyConfig struct {
 	// 中解析出的值；客户端未传时为空。写入 api_logs.session_id，用于按
 	// 会话聚合请求。
 	SessionID string
+	// UserID is the authenticated user making the request. Set by the chat
+	// handler from the JWT/API-key context. Written to api_logs.user_id.
+	UserID int
 	// IfEmpty is used by some callers as a fallback for AnthropicVersion.
 	// Kept for parity with the Python ProxyConfig; the handler fills it in.
 	IfEmpty string `json:"-"`

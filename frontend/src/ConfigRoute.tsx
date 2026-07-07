@@ -3,7 +3,7 @@ import { Button, Card, Col, Form, Input, InputNumber, Modal, Popconfirm, Row, Se
 import type { TableColumnsType } from 'antd'
 import dayjs from 'dayjs'
 import type { ProviderRecord } from './ConfigProvider'
-import { apiFetch } from './api'
+import { apiFetch, getCurrentUser } from './api'
 
 export type RouteRecord = {
   id: number
@@ -21,6 +21,9 @@ export type RouteRecord = {
 }
 
 const ConfigRoute = () => {
+  const currentUser = getCurrentUser()
+  const isAdmin = (currentUser?.role ?? 99) <= 2
+  const isRoot = (currentUser?.role ?? 99) === 1
   const [data, setData] = useState<RouteRecord[]>([])
   const [providers, setProviders] = useState<ProviderRecord[]>([])
   const [loading, setLoading] = useState(false)
@@ -169,10 +172,10 @@ const ConfigRoute = () => {
       width: 150,
       render: (_, record) => (
         <Space>
-          <Button type="link" size="small" onClick={() => handleEdit(record)}>编辑</Button>
-          <Popconfirm title="确定删除吗？" onConfirm={() => handleDelete(record.id)}>
+          {isRoot && <Button type="link" size="small" onClick={() => handleEdit(record)}>编辑</Button>}
+          {isRoot && <Popconfirm title="确定删除吗？" onConfirm={() => handleDelete(record.id)}>
             <Button type="link" danger size="small">删除</Button>
-          </Popconfirm>
+          </Popconfirm>}
         </Space>
       ),
     },
@@ -181,7 +184,7 @@ const ConfigRoute = () => {
   return (
     <Card
       title="模型路由配置"
-      extra={<Button type="primary" onClick={handleAdd}>新增路由</Button>}
+      extra={isRoot ? <Button type="primary" onClick={handleAdd}>新增路由</Button> : null}
       variant="borderless"
     >
       <Table

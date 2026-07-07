@@ -25,7 +25,7 @@ import {
 } from 'antd'
 import type { TableColumnsType } from 'antd'
 import dayjs from 'dayjs'
-import { apiFetch } from './api'
+import { apiFetch, getCurrentUser } from './api'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -466,6 +466,9 @@ const supportedProtocols = (p: ProviderRecord) => {
 }
 
 const ConfigProvider = () => {
+  const currentUser = getCurrentUser()
+  const isAdmin = (currentUser?.role ?? 99) <= 2
+  const isRoot = (currentUser?.role ?? 99) === 1
   const [data, setData] = useState<ProviderRecord[]>([])
   const [loading, setLoading] = useState(false)
   const [modalVisible, setModalVisible] = useState(false)
@@ -748,10 +751,10 @@ const ConfigProvider = () => {
       render: (_, record) => (
         <Space>
           <Button type="link" size="small" onClick={() => setDetailProviderId(record.id)}>配额</Button>
-          <Button type="link" size="small" onClick={() => handleEdit(record)}>编辑</Button>
-          <Popconfirm title="确定删除吗？" onConfirm={() => handleDelete(record.id)}>
+          {isRoot && <Button type="link" size="small" onClick={() => handleEdit(record)}>编辑</Button>}
+          {isRoot && <Popconfirm title="确定删除吗？" onConfirm={() => handleDelete(record.id)}>
             <Button type="link" danger size="small">删除</Button>
-          </Popconfirm>
+          </Popconfirm>}
         </Space>
       ),
     },
@@ -768,7 +771,7 @@ const ConfigProvider = () => {
 
       <Card
         title="大模型产商配置"
-        extra={<Button type="primary" onClick={handleAdd}>新增产商</Button>}
+        extra={isRoot ? <Button type="primary" onClick={handleAdd}>新增产商</Button> : null}
         variant="borderless"
       >
         <Table

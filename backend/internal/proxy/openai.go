@@ -89,6 +89,7 @@ func HandleOpenAI(ctx context.Context, requestData []byte, cfg models.ProxyConfi
 			ErrorMessage:   strPtr(fmt.Sprintf("Target API returned error: %d", resp.StatusCode)),
 			Protocol:       strPtr(cfg.Protocol),
 			SessionID:      strPtrOrNil(cfg.SessionID),
+			UserID:         intPtrOrNil(cfg.UserID),
 		})
 		// Pass through the upstream error
 		return resp.StatusCode, nil, io.NopCloser(strings.NewReader(string(body))), false, nil
@@ -110,6 +111,7 @@ func HandleOpenAI(ctx context.Context, requestData []byte, cfg models.ProxyConfi
 			requestHeaders:  cfg.RequestHeaders,
 			responseHeaders: hdrpkg.FromHTTPHeader(resp.Header),
 			sessionID:       cfg.SessionID,
+			userID:          cfg.UserID,
 		}
 		return resp.StatusCode, resp.Header, streamer, true, nil
 	}
@@ -153,6 +155,7 @@ func HandleOpenAI(ctx context.Context, requestData []byte, cfg models.ProxyConfi
 		Protocol:                 strPtr(cfg.Protocol),
 		UsageData:                norm.Raw,
 		SessionID:                strPtrOrNil(cfg.SessionID),
+		UserID:                   intPtrOrNil(cfg.UserID),
 	})
 
 	return resp.StatusCode, nil, io.NopCloser(strings.NewReader(string(body))), false, nil
@@ -174,6 +177,7 @@ type openaiStreamer struct {
 	requestHeaders  map[string]string
 	responseHeaders map[string]string
 	sessionID       string
+	userID          int
 
 	pending  []byte
 	finished bool
@@ -243,6 +247,7 @@ func (s *openaiStreamer) finalize() {
 		Protocol:                 strPtr(s.protocol),
 		UsageData:                norm.Raw,
 		SessionID:                strPtrOrNil(s.sessionID),
+		UserID:                   intPtrOrNil(s.userID),
 	})
 }
 
@@ -436,5 +441,6 @@ func logProxyError(ctx context.Context, requestData []byte, cfg models.ProxyConf
 		ErrorMessage:     strPtr(msg),
 		Protocol:         strPtr(cfg.Protocol),
 		SessionID:        strPtrOrNil(cfg.SessionID),
+		UserID:           intPtrOrNil(cfg.UserID),
 	})
 }

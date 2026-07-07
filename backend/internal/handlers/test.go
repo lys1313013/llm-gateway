@@ -5,11 +5,11 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"path"
 
 	"github.com/gin-gonic/gin"
 
 	"github.com/lys1313013/llm-gateway/backend/internal/db"
+	"github.com/lys1313013/llm-gateway/backend/internal/middleware"
 	"github.com/lys1313013/llm-gateway/backend/internal/models"
 	"github.com/lys1313013/llm-gateway/backend/internal/proxy"
 )
@@ -44,7 +44,7 @@ func TestChat(c *gin.Context) {
 		if r.OpenAIBaseURL == nil || *r.OpenAIBaseURL == "" {
 			continue
 		}
-		if ok, _ := path.Match(r.ModelPattern, model); ok {
+		if ok := matchModel(r.ModelPattern, model); ok {
 			route = r
 			break
 		}
@@ -67,6 +67,7 @@ func TestChat(c *gin.Context) {
 		Protocol:     "openai",
 		ProviderID:   route.ProviderID,
 		ProviderName: strDeref(route.ProviderName),
+		UserID:       c.GetInt(middleware.CtxUserID),
 	}
 
 	status, headers, bodyRC, isStream, err := proxy.HandleOpenAI(c.Request.Context(), body, cfg)
@@ -121,7 +122,7 @@ func TestMessages(c *gin.Context) {
 		if r.AnthropicBaseURL == nil || *r.AnthropicBaseURL == "" {
 			continue
 		}
-		if ok, _ := path.Match(r.ModelPattern, model); ok {
+		if ok := matchModel(r.ModelPattern, model); ok {
 			route = r
 			break
 		}
@@ -146,6 +147,7 @@ func TestMessages(c *gin.Context) {
 		AnthropicVersion: "2023-06-01",
 		ProviderID:       route.ProviderID,
 		ProviderName:     strDeref(route.ProviderName),
+		UserID:           c.GetInt(middleware.CtxUserID),
 	}
 
 	status, headers, bodyRC, isStream, err := proxy.HandleAnthropic(c.Request.Context(), body, cfg)

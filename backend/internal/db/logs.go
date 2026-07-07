@@ -35,6 +35,7 @@ type InsertLogInput struct {
 	Protocol               *string
 	UsageData              []byte // JSON
 	SessionID              *string
+	UserID                 *int
 }
 
 func InsertLog(ctx context.Context, in InsertLogInput) error {
@@ -47,9 +48,10 @@ func InsertLog(ctx context.Context, in InsertLogInput) error {
 			target_url, request_data, response_data,
 			request_headers, response_headers,
 			error_message, protocol, usage_data,
-			session_id
+			session_id,
+			user_id
 		) VALUES (
-			$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20
+			$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21
 		)`,
 		in.Model, in.ProviderID, in.ProviderName,
 		in.IsStream, in.StatusCode, in.ProcessingTimeMs,
@@ -58,7 +60,7 @@ func InsertLog(ctx context.Context, in InsertLogInput) error {
 		in.TargetURL, jsonRawOrNil(in.RequestData), jsonRawOrNil(in.ResponseData),
 		jsonRawOrNil(in.RequestHeaders), jsonRawOrNil(in.ResponseHeaders),
 		in.ErrorMessage, in.Protocol, jsonRawOrNil(in.UsageData),
-		in.SessionID,
+		in.SessionID, in.UserID,
 	)
 	return err
 }
@@ -80,6 +82,7 @@ type LogListFilter struct {
 	Model      string
 	Protocol   string
 	StatusCode int
+	UserID     int
 }
 
 func GetLogs(ctx context.Context, f LogListFilter) ([]models.APILog, error) {
@@ -105,7 +108,8 @@ func GetLogs(ctx context.Context, f LogListFilter) ([]models.APILog, error) {
 	             target_url,
 	             error_message, protocol,
 	             usage_data, cache_creation_input_tokens, cache_read_input_tokens,
-	             session_id
+	             session_id,
+	             user_id
 	      FROM api_logs WHERE 1=1`
 	args := []any{}
 	idx := 1
@@ -143,7 +147,8 @@ func GetLogByID(ctx context.Context, id int) (*models.APILog, error) {
 	             request_headers, response_headers,
 	             error_message, protocol,
 	             usage_data, cache_creation_input_tokens, cache_read_input_tokens,
-	             session_id
+	             session_id,
+	             user_id
 	         FROM api_logs WHERE id = $1`, id)
 	l, err := scanLog(row)
 	if err != nil {
@@ -181,7 +186,7 @@ func DeleteLogsBySession(ctx context.Context, sessionID string) (int64, error) {
 	return tag.RowsAffected(), nil
 }
 
-func GetLogCount(ctx context.Context, model, protocol string, statusCode int) (int, error) {
+func GetLogCount(ctx context.Context, model, protocol string, statusCode int, userID int) (int, error) {
 	q := `SELECT COUNT(*) FROM api_logs WHERE 1=1`
 	args := []any{}
 	idx := 1
@@ -198,6 +203,11 @@ func GetLogCount(ctx context.Context, model, protocol string, statusCode int) (i
 	if statusCode > 0 {
 		q += fmt.Sprintf(" AND status_code = $%d", idx)
 		args = append(args, statusCode)
+		idx++
+	}
+	if userID > 0 {
+		q += fmt.Sprintf(" AND user_id = $%d", idx)
+		args = append(args, userID)
 		idx++
 	}
 	var n int
@@ -218,11 +228,11 @@ type TodayStats struct {
 	TotalTokens      int   `json:"total_tokens"`
 }
 
-func GetTodayStats(ctx context.Context) (*TodayStats, error) {
+func GetTodayStats(ctx context.Context, userID int) (*TodayStats, error) {
 	// "Today" is computed in the configured DB timezone, matching the
 	// Python backend (default Asia/Shanghai).
 	tz := config.Get().DBTimezone
-	row := mustHavePool().QueryRow(ctx, fmt.Sprintf(`
+	q := fmt.Sprintf(`
 		SELECT
 			COUNT(*),
 			COUNT(*) FILTER (WHERE status_code BETWEEN 200 AND 299),
@@ -231,7 +241,13 @@ func GetTodayStats(ctx context.Context) (*TodayStats, error) {
 			COALESCE(SUM(completion_tokens), 0),
 			COALESCE(SUM(total_tokens), 0)
 		FROM api_logs
-		WHERE DATE(created_at AT TIME ZONE '%s') = CURRENT_DATE`, tz))
+		WHERE DATE(created_at AT TIME ZONE '%s') = CURRENT_DATE`, tz)
+	args := []any{}
+	if userID > 0 {
+		q += fmt.Sprintf(" AND user_id = $%d", 1)
+		args = append(args, userID)
+	}
+	row := mustHavePool().QueryRow(ctx, q, args...)
 	var s TodayStats
 	if err := row.Scan(&s.TotalRequests, &s.SuccessRequests, &s.ErrorRequests,
 		&s.PromptTokens, &s.CompletionTokens, &s.TotalTokens); err != nil {
@@ -248,8 +264,9 @@ type DailyTokenStats struct {
 	TotalTokens      int    `json:"total_tokens"`
 }
 
-func GetDailyTokenStats(ctx context.Context, startDate, endDate string) ([]DailyTokenStats, error) {
-	rows, err := mustHavePool().Query(ctx, `
+func GetDailyTokenStats(ctx context.Context, startDate, endDate string, userID int) ([]DailyTokenStats, error) {
+	// Build query with numbered params
+	q := `
 		SELECT
 			TO_CHAR(DATE(created_at), 'YYYY-MM-DD') AS d,
 			COUNT(id) AS request_count,
@@ -258,10 +275,14 @@ func GetDailyTokenStats(ctx context.Context, startDate, endDate string) ([]Daily
 			COALESCE(SUM(total_tokens), 0)
 		FROM api_logs
 		WHERE ($1::date IS NULL OR DATE(created_at) >= $1::date)
-		  AND ($2::date IS NULL OR DATE(created_at) <= $2::date)
-		GROUP BY DATE(created_at)
-		ORDER BY DATE(created_at) ASC`,
-		nullDate(startDate), nullDate(endDate))
+		  AND ($2::date IS NULL OR DATE(created_at) <= $2::date)`
+	args := []any{nullDate(startDate), nullDate(endDate)}
+	if userID > 0 {
+		q += " AND user_id = $3"
+		args = append(args, userID)
+	}
+	q += " GROUP BY DATE(created_at) ORDER BY DATE(created_at) ASC"
+	rows, err := mustHavePool().Query(ctx, q, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -285,12 +306,16 @@ type HourlyTokenStats struct {
 	TotalTokens      int `json:"total_tokens"`
 }
 
-func GetHourlyTokenStats(ctx context.Context, date string) ([]HourlyTokenStats, error) {
+func GetHourlyTokenStats(ctx context.Context, date string, userID int) ([]HourlyTokenStats, error) {
 	// Python uses DB_TIMEZONE (default Asia/Shanghai) for both the date
 	// filter and the hour extraction, and pads the 24-hour series with
 	// zero rows via generate_series. We mirror that here.
 	tz := config.Get().DBTimezone
-	rows, err := mustHavePool().Query(ctx, fmt.Sprintf(`
+	userFilter := ""
+	if userID > 0 {
+		userFilter = " AND user_id = $2"
+	}
+	q := fmt.Sprintf(`
 		SELECT
 			g.hour AS hour,
 			COALESCE(s.request_count, 0)     AS request_count,
@@ -306,11 +331,15 @@ func GetHourlyTokenStats(ctx context.Context, date string) ([]HourlyTokenStats, 
 				SUM(completion_tokens) AS completion_tokens,
 				SUM(total_tokens)      AS total_tokens
 			FROM api_logs
-			WHERE DATE(created_at AT TIME ZONE '%s') = $1::date
+			WHERE DATE(created_at AT TIME ZONE '%s') = $1::date%s
 			GROUP BY EXTRACT(HOUR FROM created_at AT TIME ZONE '%s')
 		) s ON s.hour = g.hour
-		ORDER BY g.hour ASC`, tz, tz, tz),
-		nullDate(date))
+		ORDER BY g.hour ASC`, tz, tz, userFilter, tz)
+	args := []any{nullDate(date)}
+	if userID > 0 {
+		args = append(args, userID)
+	}
+	rows, err := mustHavePool().Query(ctx, q, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -334,8 +363,8 @@ type ModelTokenStats struct {
 	TotalTokens      int    `json:"total_tokens"`
 }
 
-func GetModelTokenStats(ctx context.Context, startDate, endDate string) ([]ModelTokenStats, error) {
-	rows, err := mustHavePool().Query(ctx, `
+func GetModelTokenStats(ctx context.Context, startDate, endDate string, userID int) ([]ModelTokenStats, error) {
+	q := `
 		SELECT
 			COALESCE(model, 'unknown') AS m,
 			COUNT(id) AS request_count,
@@ -344,10 +373,14 @@ func GetModelTokenStats(ctx context.Context, startDate, endDate string) ([]Model
 			COALESCE(SUM(total_tokens), 0)
 		FROM api_logs
 		WHERE ($1::date IS NULL OR DATE(created_at) >= $1::date)
-		  AND ($2::date IS NULL OR DATE(created_at) <= $2::date)
-		GROUP BY model
-		ORDER BY SUM(total_tokens) DESC`,
-		nullDate(startDate), nullDate(endDate))
+		  AND ($2::date IS NULL OR DATE(created_at) <= $2::date)`
+	args := []any{nullDate(startDate), nullDate(endDate)}
+	if userID > 0 {
+		q += " AND user_id = $3"
+		args = append(args, userID)
+	}
+	q += " GROUP BY model ORDER BY SUM(total_tokens) DESC"
+	rows, err := mustHavePool().Query(ctx, q, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -409,7 +442,7 @@ func scanLog(row rowScanner) (*models.APILog, error) {
 		&l.RequestHeaders, &l.ResponseHeaders,
 		&l.ErrorMessage, &l.Protocol,
 		&l.UsageData, &l.CacheCreationInputTokens, &l.CacheReadInputTokens,
-		&l.SessionID,
+		&l.SessionID, &l.UserID,
 	)
 	if err != nil {
 		return nil, err
@@ -433,7 +466,7 @@ func scanLogs(rows interface {
 			&l.TargetURL,
 			&l.ErrorMessage, &l.Protocol,
 			&l.UsageData, &l.CacheCreationInputTokens, &l.CacheReadInputTokens,
-			&l.SessionID,
+			&l.SessionID, &l.UserID,
 		); err != nil {
 			return nil, err
 		}
@@ -487,6 +520,7 @@ type SessionsListFilter struct {
 	Query  string // optional ILIKE match on session_id
 	Limit  int
 	Offset int
+	UserID int
 }
 
 func GetSessions(ctx context.Context, f SessionsListFilter) ([]SessionSummary, error) {
@@ -516,6 +550,11 @@ func GetSessions(ctx context.Context, f SessionsListFilter) ([]SessionSummary, e
 	if f.Query != "" {
 		q += fmt.Sprintf(" AND session_id ILIKE $%d", idx)
 		args = append(args, "%"+f.Query+"%")
+		idx++
+	}
+	if f.UserID > 0 {
+		q += fmt.Sprintf(" AND user_id = $%d", idx)
+		args = append(args, f.UserID)
 		idx++
 	}
 	q += fmt.Sprintf(" GROUP BY session_id ORDER BY MAX(created_at) DESC LIMIT $%d OFFSET $%d", idx, idx+1)
@@ -573,7 +612,8 @@ func GetLogsBySession(ctx context.Context, sessionID string, limit, offset int) 
 		       target_url,
 		       error_message, protocol,
 		       usage_data, cache_creation_input_tokens, cache_read_input_tokens,
-		       session_id
+		       session_id,
+		       user_id
 		FROM api_logs
 		WHERE session_id = $1
 		ORDER BY id ASC

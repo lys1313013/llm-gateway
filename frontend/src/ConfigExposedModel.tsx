@@ -1,15 +1,17 @@
 import { useEffect, useRef, useState } from 'react'
-import { Button, Card, Dropdown, Form, Input, Modal, Popconfirm, Progress, Space, Switch, Table, Tag, Typography, message } from 'antd'
+import { Button, Card, Dropdown, Form, Input, Modal, Popconfirm, Progress, Select, Space, Switch, Table, Tag, Typography, message } from 'antd'
 import { DownOutlined, LoadingOutlined, ThunderboltOutlined } from '@ant-design/icons'
 import type { TableColumnsType } from 'antd'
 import dayjs from 'dayjs'
-import { apiFetch } from './api'
+import { apiFetch, getCurrentUser } from './api'
 
 export type ExposedModelRecord = {
   id: number
   model_id: string
   owned_by: string
   is_active: boolean
+  team_id: number | null
+  team_name: string
   last_openai_test_time: string | null
   last_anthropic_test_time: string | null
   create_time: string
@@ -113,7 +115,11 @@ async function runWithConcurrency<T>(
 }
 
 const ConfigExposedModel = () => {
+  const currentUser = getCurrentUser()
+  const isAdmin = (currentUser?.role ?? 99) <= 2
+  const isRoot = (currentUser?.role ?? 99) === 1
   const [data, setData] = useState<ExposedModelRecord[]>([])
+  const [teams, setTeams] = useState<{ id: number; name: string }[]>([])
   const [loading, setLoading] = useState(false)
   const [modalVisible, setModalVisible] = useState(false)
   const [editingRecord, setEditingRecord] = useState<ExposedModelRecord | null>(null)
@@ -150,7 +156,13 @@ const ConfigExposedModel = () => {
   useEffect(() => {
     const controller = new AbortController()
     void fetchData(controller.signal)
+    if (isRoot) {
+      apiFetch('/api/team').then(r => r.json()).then(d => {
+        if (d.success) setTeams(d.data || [])
+      }).catch(() => {})
+    }
     return () => controller.abort()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   const handleAdd = () => {
@@ -335,11 +347,18 @@ const ConfigExposedModel = () => {
     { title: '模型 ID', dataIndex: 'model_id' },
     { title: 'Owned By', dataIndex: 'owned_by', width: 130 },
     {
+      title: '所属团队',
+      dataIndex: 'team_name',
+      width: 130,
+      render: (name: string, record: ExposedModelRecord) =>
+        record.team_id ? <Tag color="purple">{name || `团队 #${record.team_id}`}</Tag> : <Tag color="default">全局</Tag>,
+    },
+    {
       title: '状态',
       dataIndex: 'is_active',
       width: 80,
       render: (v: boolean, record) => (
-        <Switch checked={v} onChange={() => handleToggleActive(record)} />
+        isRoot ? <Switch checked={v} onChange={() => handleToggleActive(record)} /> : (v ? <Tag color="green">启用</Tag> : <Tag color="default">停用</Tag>)
       ),
     },
     {
@@ -362,7 +381,7 @@ const ConfigExposedModel = () => {
       width: 200,
       render: (_, record) => (
         <Space>
-          <Button type="link" size="small" onClick={() => handleEdit(record)}>编辑</Button>
+          {isRoot && <Button type="link" size="small" onClick={() => handleEdit(record)}>编辑</Button>}
           <Dropdown
             menu={{
               items: [
@@ -376,9 +395,9 @@ const ConfigExposedModel = () => {
               测试 <DownOutlined />
             </Button>
           </Dropdown>
-          <Popconfirm title="确定删除吗？" onConfirm={() => handleDelete(record.id)}>
+          {isRoot && <Popconfirm title="确定删除吗？" onConfirm={() => handleDelete(record.id)}>
             <Button type="link" danger size="small">删除</Button>
-          </Popconfirm>
+          </Popconfirm>}
         </Space>
       ),
     },
@@ -460,7 +479,7 @@ const ConfigExposedModel = () => {
           >
             一键测试全部
           </Button>
-          <Button type="primary" onClick={handleAdd}>新增模型</Button>
+          {isRoot && <Button type="primary" onClick={handleAdd}>新增模型</Button>}
         </Space>
       }
       variant="borderless"
@@ -487,6 +506,13 @@ const ConfigExposedModel = () => {
           </Form.Item>
           <Form.Item name="owned_by" label="Owned By" rules={[{ required: true }]}>
             <Input placeholder="如: organization, openai" />
+          </Form.Item>
+          <Form.Item name="team_id" label="所属团队" tooltip="留空 = 全局可见，所有团队都能使用">
+            <Select
+              allowClear
+              placeholder="选择团队（留空为全局）"
+              options={teams.map((t) => ({ value: t.id, label: t.name }))}
+            />
           </Form.Item>
           <Form.Item name="is_active" label="启用" valuePropName="checked">
             <Switch />
