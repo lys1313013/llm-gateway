@@ -116,7 +116,6 @@ async function runWithConcurrency<T>(
 
 const ConfigExposedModel = () => {
   const currentUser = getCurrentUser()
-  const isAdmin = (currentUser?.role ?? 99) <= 2
   const isRoot = (currentUser?.role ?? 99) === 1
   const [data, setData] = useState<ExposedModelRecord[]>([])
   const [teams, setTeams] = useState<{ id: number; name: string }[]>([])

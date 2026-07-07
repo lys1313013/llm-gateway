@@ -5,7 +5,7 @@ import {
 import type { TableColumnsType } from 'antd'
 import { CopyOutlined, ReloadOutlined, SearchOutlined } from '@ant-design/icons'
 import dayjs from 'dayjs'
-import { apiFetch, getCurrentUser } from './api'
+import { apiFetch } from './api'
 
 const { Title, Text } = Typography
 
@@ -54,7 +54,6 @@ const copyText = (text: string) => {
 }
 
 const Sessions = () => {
-  const isAdmin = (getCurrentUser()?.role ?? 99) <= 2
   const [sessions, setSessions] = useState<SessionSummary[]>([])
   const [loading, setLoading] = useState(false)
   const [total, setTotal] = useState(0)

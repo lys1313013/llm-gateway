@@ -5,7 +5,7 @@ import { ClusterOutlined } from '@ant-design/icons'
 import dayjs from 'dayjs'
 import JsonViewer from './JsonViewer'
 import ConversationPreview from './ConversationPreview'
-import { apiFetch, getCurrentUser } from './api'
+import { apiFetch } from './api'
 
 const { Title, Text } = Typography
 

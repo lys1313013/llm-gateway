@@ -22,7 +22,6 @@ export type RouteRecord = {
 
 const ConfigRoute = () => {
   const currentUser = getCurrentUser()
-  const isAdmin = (currentUser?.role ?? 99) <= 2
   const isRoot = (currentUser?.role ?? 99) === 1
   const [data, setData] = useState<RouteRecord[]>([])
   const [providers, setProviders] = useState<ProviderRecord[]>([])
