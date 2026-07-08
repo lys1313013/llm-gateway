@@ -10,7 +10,7 @@ services:
   # Listens on container port 5001, which the frontend nginx proxies to.
   # ---------------------------------------------------------------------------
   backend:
-    image: ghcr.io/lys1313013/llm-gateway-backend:latest
+    image: crpi-yvha9coypdedaafa.cn-beijing.personal.cr.aliyuncs.com/lys1313013/llm-gateway-backend:latest
     container_name: llm_gateway_backend
     networks:
       default:
@@ -47,7 +47,7 @@ services:
   # nginx.conf proxies /api and /v1 to host `backend:5001`.
   # ---------------------------------------------------------------------------
   frontend:
-    image: ghcr.io/lys1313013/llm-gateway-frontend:latest
+    image: crpi-yvha9coypdedaafa.cn-beijing.personal.cr.aliyuncs.com/lys1313013/llm-gateway-frontend:latest
     container_name: llm_gateway_frontend
     ports:
       - "${FRONTEND_HOST_PORT:-33380}:80"
