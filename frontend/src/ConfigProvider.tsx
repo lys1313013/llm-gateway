@@ -495,7 +495,7 @@ const ConfigProvider = () => {
     try {
       const res = await apiFetch('/api/provider')
       const json = await res.json()
-      if (json.success) setData(json.data)
+      if (json.success) setData(json.data ?? [])
     } catch {
       message.error('获取产商列表失败')
     } finally {
@@ -508,7 +508,7 @@ const ConfigProvider = () => {
     try {
       const res = await apiFetch('/api/provider/quota')
       const json = await res.json()
-      if (json.success) setQuotaEntries(json.data)
+      if (json.success) setQuotaEntries(json.data ?? [])
     } catch {
       // Silent — quota card shows its own error state.
     } finally {

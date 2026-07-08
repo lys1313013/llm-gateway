@@ -132,8 +132,10 @@ func asInt(v any) int {
 // chat request/response when the upstream didn't return a usage block.
 func CalculateOpenAIUsage(requestData, responseData any) models.NormalizedUsage {
 	model := "gpt-3.5-turbo"
-	if m, ok := requestData.(map[string]any)["model"].(string); ok && m != "" {
-		model = m
+	if reqMap, ok := requestData.(map[string]any); ok {
+		if m, ok2 := reqMap["model"].(string); ok2 && m != "" {
+			model = m
+		}
 	}
 
 	prompt := flattenOpenAIPrompt(requestData)

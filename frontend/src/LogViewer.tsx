@@ -143,7 +143,7 @@ const LogViewer = () => {
       const res = await apiFetch(`/api/logs/${record.id}`)
       const result = await res.json()
       if (result.success) {
-        setCurrentLog(result.data as LogRecord)
+        setCurrentLog((result.data as LogRecord) ?? record)
       }
     } catch (e) {
       console.error('获取日志详情失败:', e)

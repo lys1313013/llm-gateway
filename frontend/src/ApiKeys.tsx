@@ -36,7 +36,7 @@ const ApiKeys = () => {
     try {
       const res = await apiFetch('/api/auth/api_keys')
       const json = await res.json()
-      if (json.success) setData(json.data)
+      if (json.success) setData(json.data ?? [])
     } catch {
       message.error('获取 API Key 列表失败')
     } finally {

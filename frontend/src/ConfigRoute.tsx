@@ -41,8 +41,8 @@ const ConfigRoute = () => {
         resRoutes.json(),
         resProviders.json()
       ])
-      if (jsonRoutes.success) setData(jsonRoutes.data)
-      if (jsonProviders.success) setProviders(jsonProviders.data)
+      if (jsonRoutes.success) setData(jsonRoutes.data ?? [])
+      if (jsonProviders.success) setProviders(jsonProviders.data ?? [])
     } catch (e) {
       message.error('获取路由或产商列表失败')
     } finally {
