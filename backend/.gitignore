@@ -5,6 +5,7 @@ dist/
 *.test
 *.out
 tmp/
+gateway
 
 # Local config
 .env
