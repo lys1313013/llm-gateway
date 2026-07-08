@@ -72,7 +72,7 @@ const Sessions = () => {
       const res = await apiFetch(`/api/sessions?${params}`)
       const json = await res.json()
       if (json.success) {
-        setSessions(json.data as SessionSummary[])
+        setSessions((json.data as SessionSummary[]) ?? [])
         setTotal(json.total ?? 0)
       } else {
         message.error(json.message || '获取会话列表失败')

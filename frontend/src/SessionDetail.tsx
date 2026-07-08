@@ -313,7 +313,7 @@ const SessionDetail = ({ sessionId }: Props) => {
       const json = await res.json()
       if (json.success) {
         setMeta(json.meta as SessionMeta)
-        setLogs(json.data as SessionLog[])
+        setLogs((json.data as SessionLog[]) ?? [])
         setTotal(json.total ?? 0)
       } else {
         message.error(json.message || '获取会话详情失败')

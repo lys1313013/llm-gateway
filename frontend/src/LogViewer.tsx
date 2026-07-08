@@ -95,7 +95,7 @@ const LogViewer = () => {
       const response = await apiFetch(`/api/logs?${params}`)
       const result = await response.json()
       if (result.success) {
-        setLogs(result.data as LogRecord[])
+        setLogs((result.data as LogRecord[]) ?? [])
         setTotal(result.total ?? 0)
       }
     } catch (error) {
