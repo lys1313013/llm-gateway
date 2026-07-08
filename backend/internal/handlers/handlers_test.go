@@ -17,6 +17,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -204,6 +205,11 @@ func TestAuth_RegisterLogin(t *testing.T) {
 	if w.Code != 201 {
 		t.Fatalf("register: expected 201, got %d: %s", w.Code, w.Body.String())
 	}
+	userData, _ := body["data"].(map[string]any)["user"].(map[string]any)
+	userID := int(userData["id"].(float64))
+	t.Cleanup(func() {
+		db.Pool.Exec(context.Background(), "DELETE FROM users WHERE id = $1", userID)
+	})
 	token, _ := body["data"].(map[string]any)["token"].(string)
 	if token == "" {
 		t.Fatal("register: token missing")
@@ -238,14 +244,17 @@ func TestProviderCRUD(t *testing.T) {
 	if w.Code != 201 {
 		t.Fatalf("register: %d", w.Code)
 	}
+	userData, _ := body["data"].(map[string]any)["user"].(map[string]any)
+	userIDP := int(userData["id"].(float64))
+	t.Cleanup(func() {
+		db.Pool.Exec(context.Background(), "DELETE FROM users WHERE id = $1", userIDP)
+	})
 	token, _ := body["data"].(map[string]any)["token"].(string)
 	auth := map[string]string{"Authorization": "Bearer " + token}
 
 	// Promote test user to admin so CRUD tests pass, then re-login
 	// for a fresh JWT with the updated role.
-	userData, _ := body["data"].(map[string]any)["user"].(map[string]any)
-	userID := int(userData["id"].(float64))
-	if err := db.UpdateUserRole(context.Background(), userID, 2); err != nil {
+	if err := db.UpdateUserRole(context.Background(), userIDP, 2); err != nil {
 		t.Fatalf("promote user to admin: %v", err)
 	}
 	w, body = doJSON(t, r, "POST", "/api/auth/login", map[string]string{
@@ -319,6 +328,9 @@ func TestLogs_AndStats(t *testing.T) {
 	userData, _ := body["data"].(map[string]any)["user"].(map[string]any)
 	logUserID := int(userData["id"].(float64))
 	_ = db.UpdateUserRole(context.Background(), logUserID, 2)
+	t.Cleanup(func() {
+		db.Pool.Exec(context.Background(), "DELETE FROM users WHERE id = $1", logUserID)
+	})
 
 	w, _ = doJSON(t, r, "GET", "/api/logs?limit=5", nil, auth)
 	if w.Code != 200 {
@@ -358,9 +370,15 @@ func TestSessions_Smoke(t *testing.T) {
 	if err := db.UpdateUserRole(context.Background(), sessUserID, 2); err != nil {
 		t.Fatalf("promote to admin: %v", err)
 	}
+	t.Cleanup(func() {
+		db.Pool.Exec(context.Background(), "DELETE FROM users WHERE id = $1", sessUserID)
+	})
 
 	sessA := fmt.Sprintf("sess-A-%d", suffix)
 	sessB := fmt.Sprintf("sess-B-%d", suffix)
+	t.Cleanup(func() {
+		db.Pool.Exec(context.Background(), "DELETE FROM api_logs WHERE session_id IN ($1, $2)", sessA, sessB)
+	})
 
 	ctx := context.Background()
 
@@ -502,6 +520,9 @@ func TestConcurrentLoad(t *testing.T) {
 	userData, _ := body["data"].(map[string]any)["user"].(map[string]any)
 	loadUserID := int(userData["id"].(float64))
 	_ = db.UpdateUserRole(context.Background(), loadUserID, 2)
+	t.Cleanup(func() {
+		db.Pool.Exec(context.Background(), "DELETE FROM users WHERE id = $1", loadUserID)
+	})
 
 	const (
 		concurrency = 50
@@ -560,6 +581,11 @@ func registerAndPromote(t *testing.T, r http.Handler, prefix string) map[string]
 	if err := db.UpdateUserRole(context.Background(), userID, 2); err != nil {
 		t.Fatalf("%s promote: %v", prefix, err)
 	}
+
+	// Clean up test user (and cascading api_keys) when the test finishes.
+	t.Cleanup(func() {
+		db.Pool.Exec(context.Background(), "DELETE FROM users WHERE id = $1", userID)
+	})
 
 	w, body = doJSON(t, r, "POST", "/api/auth/login", map[string]string{
 		"username": username,
@@ -853,6 +879,11 @@ func registerCommon(t *testing.T, r http.Handler) map[string]string {
 	if w.Code != 201 {
 		t.Fatalf("register common: %d", w.Code)
 	}
+	user, _ := body["data"].(map[string]any)["user"].(map[string]any)
+	userID := int(user["id"].(float64))
+	t.Cleanup(func() {
+		db.Pool.Exec(context.Background(), "DELETE FROM users WHERE id = $1", userID)
+	})
 	token, _ := body["data"].(map[string]any)["token"].(string)
 	return map[string]string{"Authorization": "Bearer " + token}
 }
@@ -899,6 +930,9 @@ func TestLogDetailAndDelete(t *testing.T) {
 	ctx := context.Background()
 	suffix := time.Now().UnixNano()
 	model := fmt.Sprintf("gtest-model-%d", suffix)
+	t.Cleanup(func() {
+		db.Pool.Exec(context.Background(), "DELETE FROM api_logs WHERE model = $1", model)
+	})
 	if err := db.InsertLog(ctx, db.InsertLogInput{
 		Model:            &model,
 		IsStream:         false,
@@ -943,6 +977,9 @@ func TestSessionDelete(t *testing.T) {
 
 	sessionID := fmt.Sprintf("sess-del-%d", time.Now().UnixNano())
 	ctx := context.Background()
+	t.Cleanup(func() {
+		db.Pool.Exec(context.Background(), "DELETE FROM api_logs WHERE session_id = $1", sessionID)
+	})
 
 	// Insert a few logs with a session_id
 	for i := 0; i < 3; i++ {
@@ -1001,4 +1038,193 @@ func TestStatusCodes(t *testing.T) {
 	if w.Code != 200 {
 		t.Fatalf("status codes: %d", w.Code)
 	}
+}
+
+// ---------------------------------------------------------------------------
+// Live upstream tests — skipped unless TEST_UPSTREAM_API_KEY is set
+// ---------------------------------------------------------------------------
+
+func upstreamAPIKey(t *testing.T) string {
+	t.Helper()
+	k := os.Getenv("TEST_UPSTREAM_API_KEY")
+	if k == "" {
+		t.Skip("skipping: TEST_UPSTREAM_API_KEY not set")
+	}
+	return k
+}
+
+func setupUpstreamRoute(t *testing.T, r http.Handler, auth map[string]string, routeType, baseURL, modelPattern, targetModel string) {
+	t.Helper()
+
+	// Create provider
+	provName := fmt.Sprintf("gtest_upstream_%s_%d", routeType, time.Now().UnixNano())
+	provPayload := map[string]any{
+		"name":        provName,
+		"api_key":     upstreamAPIKey(t),
+		"remark":      "go test upstream",
+	}
+	if routeType == "openai" {
+		provPayload["openai_base_url"] = baseURL
+	} else {
+		provPayload["anthropic_base_url"] = baseURL
+	}
+	w, pbody := doJSON(t, r, "POST", "/api/provider", provPayload, auth)
+	if w.Code != 200 {
+		t.Fatalf("create upstream provider: %d: %s", w.Code, w.Body.String())
+	}
+	pid := int(pbody["data"].(map[string]any)["id"].(float64))
+	t.Cleanup(func() {
+		doJSON(t, r, "DELETE", fmt.Sprintf("/api/provider/%d", pid), nil, auth)
+	})
+
+	// Create route
+	w, _ = doJSON(t, r, "POST", "/api/route", map[string]any{
+		"model_pattern": modelPattern,
+		"route_type":    routeType,
+		"provider_id":   pid,
+		"target_model":  targetModel,
+		"timeout":       60,
+		"priority":      99,
+		"is_active":     true,
+	}, auth)
+	if w.Code != 200 {
+		t.Fatalf("create upstream route: %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestUpstream_OpenAI_NonStreaming(t *testing.T) {
+	r := setupRouter(t)
+	auth := registerAndPromote(t, r, "gtest_upstream_openai")
+	_ = upstreamAPIKey(t) // skip if not set
+
+	model := fmt.Sprintf("gtest-upstream-openai-%d", time.Now().UnixNano())
+	setupUpstreamRoute(t, r, auth, "openai", "https://dashscope.aliyuncs.com/compatible-mode/v1", model, "qwen-turbo")
+
+	// Create gateway API key for the /v1 call
+	w, abody := doJSON(t, r, "POST", "/api/auth/api_keys", map[string]string{"name": "upstream-test"}, auth)
+	if w.Code != 200 && w.Code != 201 {
+		t.Fatalf("create api key: %d: %s", w.Code, w.Body.String())
+	}
+	gwKey, _ := abody["data"].(map[string]any)["key"].(string)
+	kid := int(abody["data"].(map[string]any)["id"].(float64))
+	t.Cleanup(func() {
+		doJSON(t, r, "DELETE", fmt.Sprintf("/api/auth/api_keys/%d", kid), nil, auth)
+	})
+
+	v1Headers := map[string]string{
+		"Authorization":             "Bearer " + gwKey,
+		"X-Claude-Code-Session-Id":  fmt.Sprintf("gtest-upstream-%d", time.Now().UnixNano()),
+	}
+
+	w, body := doJSON(t, r, "POST", "/v1/chat/completions", map[string]any{
+		"model":       model,
+		"messages":    []map[string]string{{"role": "user", "content": "Reply with the single word: pong"}},
+		"max_tokens":  50,
+	}, v1Headers)
+	if w.Code != 200 {
+		t.Fatalf("non-stream chat: %d: %s", w.Code, w.Body.String())
+	}
+	if _, ok := body["choices"]; !ok {
+		t.Fatalf("expected choices in response, got keys: %v", mapKeys(body))
+	}
+	if _, ok := body["usage"]; !ok {
+		t.Fatalf("expected usage in response, got keys: %v", mapKeys(body))
+	}
+}
+
+func TestUpstream_OpenAI_Streaming(t *testing.T) {
+	r := setupRouter(t)
+	auth := registerAndPromote(t, r, "gtest_upstream_oaistream")
+	_ = upstreamAPIKey(t)
+
+	model := fmt.Sprintf("gtest-upstream-oaistream-%d", time.Now().UnixNano())
+	setupUpstreamRoute(t, r, auth, "openai", "https://dashscope.aliyuncs.com/compatible-mode/v1", model, "qwen-turbo")
+
+	w, abody := doJSON(t, r, "POST", "/api/auth/api_keys", map[string]string{"name": "upstream-stream"}, auth)
+	if w.Code != 200 && w.Code != 201 {
+		t.Fatalf("create api key: %d", w.Code)
+	}
+	gwKey, _ := abody["data"].(map[string]any)["key"].(string)
+	kid := int(abody["data"].(map[string]any)["id"].(float64))
+	t.Cleanup(func() {
+		doJSON(t, r, "DELETE", fmt.Sprintf("/api/auth/api_keys/%d", kid), nil, auth)
+	})
+
+	v1Headers := map[string]string{
+		"Authorization":             "Bearer " + gwKey,
+		"X-Claude-Code-Session-Id":  fmt.Sprintf("gtest-upstream-stream-%d", time.Now().UnixNano()),
+	}
+
+	body := map[string]any{
+		"model":    model,
+		"messages": []map[string]string{{"role": "user", "content": "Count: 1 2 3"}},
+		"stream":   true,
+		"max_tokens": 60,
+	}
+	b, _ := json.Marshal(body)
+	req := httptest.NewRequest("POST", "/v1/chat/completions", bytes.NewReader(b))
+	req.Header.Set("Content-Type", "application/json")
+	for k, v := range v1Headers {
+		req.Header.Set(k, v)
+	}
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != 200 {
+		t.Fatalf("stream chat: %d: %s", w.Code, w.Body.String())
+	}
+
+	bodyStr := w.Body.String()
+	if !strings.Contains(bodyStr, "data: ") {
+		t.Fatalf("expected SSE data chunks, got: %s", bodyStr[:min(len(bodyStr), 500)])
+	}
+	if !strings.Contains(bodyStr, "[DONE]") {
+		t.Fatalf("expected [DONE] sentinel, got: %s", bodyStr[:min(len(bodyStr), 500)])
+	}
+}
+
+func TestUpstream_Anthropic(t *testing.T) {
+	r := setupRouter(t)
+	auth := registerAndPromote(t, r, "gtest_upstream_anthropic")
+	_ = upstreamAPIKey(t)
+
+	model := fmt.Sprintf("gtest-upstream-anthropic-%d", time.Now().UnixNano())
+	setupUpstreamRoute(t, r, auth, "anthropic", "https://api.anthropic.com", model, "claude-haiku-4-5")
+
+	// Create gateway API key
+	w, abody := doJSON(t, r, "POST", "/api/auth/api_keys", map[string]string{"name": "upstream-anthropic"}, auth)
+	if w.Code != 200 && w.Code != 201 {
+		t.Fatalf("create api key: %d", w.Code)
+	}
+	gwKey, _ := abody["data"].(map[string]any)["key"].(string)
+	kid := int(abody["data"].(map[string]any)["id"].(float64))
+	t.Cleanup(func() {
+		doJSON(t, r, "DELETE", fmt.Sprintf("/api/auth/api_keys/%d", kid), nil, auth)
+	})
+
+	v1Headers := map[string]string{
+		"x-api-key":                 gwKey,
+		"anthropic-version":         "2023-06-01",
+		"X-Claude-Code-Session-Id":  fmt.Sprintf("gtest-upstream-anthropic-%d", time.Now().UnixNano()),
+	}
+
+	w, body := doJSON(t, r, "POST", "/v1/messages", map[string]any{
+		"model":      model,
+		"max_tokens": 50,
+		"messages":   []map[string]string{{"role": "user", "content": "Say hi"}},
+	}, v1Headers)
+	if w.Code != 200 {
+		t.Fatalf("anthropic messages: %d: %s", w.Code, w.Body.String())
+	}
+	if _, ok := body["content"]; !ok {
+		t.Fatalf("expected content in response, got keys: %v", mapKeys(body))
+	}
+}
+
+func mapKeys(m map[string]any) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	return keys
 }

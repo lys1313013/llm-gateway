@@ -20,16 +20,6 @@
     "remark": "官方 Anthropic"
   },
   {
-    "id": "azure_openai",
-    "name": "Azure OpenAI",
-    "description": "微软 Azure OpenAI 服务",
-    "openai_base_url": "https://{your-resource}.openai.azure.com/openai/deployments/{your-deployment}",
-    "anthropic_base_url": "",
-    "quota_url": "",
-    "quota_format": "",
-    "remark": "请将 {your-resource} 和 {your-deployment} 替换为实际值"
-  },
-  {
     "id": "deepseek",
     "name": "DeepSeek",
     "description": "DeepSeek 官方 (api.deepseek.com)",

@@ -25,8 +25,7 @@ order-of-magnitude reduction in memory + cold-start.
 ```
 backend/
 ├── cmd/
-│   ├── gateway/         main HTTP server
-│   └── pwhashcheck/     cross-language hash round-trip helper
+│   └── gateway/         main HTTP server
 ├── internal/
 │   ├── auth/            password + JWT + API key helpers
 │   ├── config/          env loading
@@ -66,8 +65,7 @@ cd backend
 air
 ```
 
-Config lives in [`.air.toml`](.air.toml). `tests/` and
-`tmp/` are excluded so SQL/test edits don't trigger a rebuild.
+Config lives in [`.air.toml`](.air.toml). `tmp/` is excluded so SQL/test edits don't trigger a rebuild.
 
 The server reads its config from env vars (or a local `.env`). The
 relevant keys are:
@@ -86,19 +84,3 @@ relevant keys are:
 
 The server creates the default admin user (`admin` / `llm_gateway`) on
 first boot if the `users` table is empty.
-
-## Cross-language password compatibility
-
-The Go `auth` package emits and verifies the same
-`pbkdf2:sha256:NUM$salt$hash` format that Werkzeug 3.x uses, so a user
-hash created by the legacy Python backend can be verified here. The
-round-trip is covered by:
-
-```bash
-python3 internal/auth/cross_test.py
-```
-
-## E2E tests
-
-See [tests/](tests/) (added by the e2e task). The suite boots the server
-against a fresh database and exercises every route category.
