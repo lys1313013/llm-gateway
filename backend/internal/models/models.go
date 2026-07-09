@@ -14,6 +14,7 @@ type Provider struct {
 	Name             string    `json:"name"`
 	OpenAIBaseURL    *string   `json:"openai_base_url,omitempty"`
 	AnthropicBaseURL *string   `json:"anthropic_base_url,omitempty"`
+	ResponsesBaseURL *string   `json:"responses_base_url,omitempty"`
 	APIKey           *string   `json:"api_key,omitempty"`
 	Remark           *string   `json:"remark,omitempty"`
 	QuotaURL         *string   `json:"quota_url,omitempty"`
@@ -39,6 +40,7 @@ type ModelRoute struct {
 	// Joined fields from provider
 	OpenAIBaseURL    *string `json:"openai_base_url,omitempty"`
 	AnthropicBaseURL *string `json:"anthropic_base_url,omitempty"`
+	ResponsesBaseURL *string `json:"responses_base_url,omitempty"`
 	APIKey           *string `json:"api_key,omitempty"`
 	ProviderName     *string `json:"provider_name,omitempty"`
 }

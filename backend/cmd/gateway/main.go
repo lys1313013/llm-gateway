@@ -123,6 +123,7 @@ func registerRoutes(r *gin.Engine) {
 	r.GET("/v1/models", handlers.ListModels)
 	r.POST("/v1/chat/completions", handlers.ChatCompletions)
 	r.POST("/v1/messages", handlers.AnthropicMessages)
+	r.POST("/v1/responses", handlers.Responses)
 
 	// /api/auth/* — auth (login/register are whitelisted, the rest need JWT)
 	authGrp := r.Group("/api/auth")

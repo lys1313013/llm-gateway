@@ -17,7 +17,7 @@ const routeSelectCols = `
 	r.id, r.model_pattern, r.route_type, r.provider_id, r.target_model,
 	r.timeout, COALESCE(r.log_requests, TRUE), COALESCE(r.log_responses, TRUE), r.priority, r.is_active,
 	r.create_time, r.update_time,
-	p.openai_base_url, p.anthropic_base_url, p.api_key, p.name
+	p.openai_base_url, p.anthropic_base_url, p.responses_base_url, p.api_key, p.name
 `
 
 const routeFromJoin = `
@@ -169,7 +169,7 @@ func scanRoute(row rowScanner) (*models.ModelRoute, error) {
 		&r.ID, &r.ModelPattern, &r.RouteType, &r.ProviderID, &r.TargetModel,
 		&r.Timeout, &r.LogRequests, &r.LogResponses, &r.Priority, &r.IsActive,
 		&r.CreateTime, &r.UpdateTime,
-		&r.OpenAIBaseURL, &r.AnthropicBaseURL, &r.APIKey, &r.ProviderName,
+		&r.OpenAIBaseURL, &r.AnthropicBaseURL, &r.ResponsesBaseURL, &r.APIKey, &r.ProviderName,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -193,7 +193,7 @@ func scanRoutes(rows interface {
 			&r.ID, &r.ModelPattern, &r.RouteType, &r.ProviderID, &r.TargetModel,
 			&r.Timeout, &r.LogRequests, &r.LogResponses, &r.Priority, &r.IsActive,
 			&r.CreateTime, &r.UpdateTime,
-			&r.OpenAIBaseURL, &r.AnthropicBaseURL, &r.APIKey, &r.ProviderName,
+			&r.OpenAIBaseURL, &r.AnthropicBaseURL, &r.ResponsesBaseURL, &r.APIKey, &r.ProviderName,
 		); err != nil {
 			return nil, fmt.Errorf("scan routes: %w", err)
 		}

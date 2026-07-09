@@ -147,6 +147,7 @@ const ConfigRoute = () => {
         const tags: { color: string; label: string }[] = []
         if (p.openai_base_url) tags.push({ color: 'green', label: 'OpenAI' })
         if (p.anthropic_base_url) tags.push({ color: 'orange', label: 'Anthropic' })
+        if (p.responses_base_url) tags.push({ color: 'blue', label: 'Responses' })
         if (tags.length === 0) return <Tag color="default">未配置</Tag>
         return (
           <Space size={4}>

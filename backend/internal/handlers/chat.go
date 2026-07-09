@@ -355,3 +355,115 @@ func defaultStr(s, def string) string {
 	}
 	return s
 }
+
+// ---------------------------------------------------------------------------
+// /v1/responses  (OpenAI Responses API)
+// ---------------------------------------------------------------------------
+
+func Responses(c *gin.Context) {
+	body, err := io.ReadAll(c.Request.Body)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{
+			"message": "Request body must be JSON", "type": "invalid_request_error",
+		}})
+		return
+	}
+	var data map[string]any
+	if err := json.Unmarshal(body, &data); err != nil || data == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{
+			"message": "Request body must be JSON", "type": "invalid_request_error",
+		}})
+		return
+	}
+
+	model, _ := data["model"].(string)
+
+	if slog.Default().Enabled(c.Request.Context(), slog.LevelInfo) {
+		headers := collectHeaders(c.Request.Header)
+		slog.Info("responses: received", "headers", headers, "body", string(body))
+	}
+
+	route := matchResponsesRoute(c, model)
+	if route == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": gin.H{
+			"message": fmt.Sprintf("No route matched for model '%s'", model),
+			"type":    "invalid_request_error",
+		}})
+		return
+	}
+
+	target := buildResponsesTargetURL(route.ResponsesBaseURL)
+
+	cfg := gatewaymodels.ProxyConfig{
+		TargetURL:      target,
+		APIKey:         strDeref(route.APIKey),
+		Timeout:        route.Timeout,
+		LogRequests:    route.LogRequests,
+		LogResponses:   route.LogResponses,
+		Model:          strDeref(route.TargetModel, model),
+		Protocol:       "responses",
+		ProviderID:     route.ProviderID,
+		ProviderName:   strDeref(route.ProviderName),
+		RequestHeaders: hdrpkg.FromMap(collectHeaders(c.Request.Header)),
+		SessionID:      resolveSessionID(c),
+		UserID:         c.GetInt(middleware.CtxUserID),
+	}
+
+	status, headers, bodyRC, isStream, err := proxy.HandleResponses(c.Request.Context(), body, cfg)
+	if err != nil {
+		slog.Error("responses proxy", "err", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": gin.H{
+			"message": err.Error(), "type": "internal_server_error",
+		}})
+		return
+	}
+
+	if isStream {
+		writeStream(c, status, headers, bodyRC)
+		return
+	}
+
+	if bodyRC == nil {
+		c.JSON(status, gin.H{"error": gin.H{
+			"message": "upstream error", "type": "api_error",
+		}})
+		return
+	}
+	defer bodyRC.Close()
+	respBody, _ := io.ReadAll(bodyRC)
+	if status != http.StatusOK {
+		var parsed any
+		if json.Unmarshal(respBody, &parsed) == nil {
+			c.Data(status, "application/json", respBody)
+			return
+		}
+	}
+	c.Data(status, "application/json", respBody)
+}
+
+func matchResponsesRoute(c *gin.Context, model string) *gatewaymodels.ModelRoute {
+	routes, err := db.GetActiveRoutes(c.Request.Context())
+	if err != nil {
+		slog.Error("get active routes", "err", err)
+		return nil
+	}
+	for i := range routes {
+		r := &routes[i]
+		if r.ResponsesBaseURL == nil || *r.ResponsesBaseURL == "" {
+			continue
+		}
+		matched := matchModel(r.ModelPattern, model)
+		if matched {
+			return r
+		}
+	}
+	return nil
+}
+
+func buildResponsesTargetURL(base *string) string {
+	b := strings.TrimRight(strDeref(base), "/")
+	if strings.HasSuffix(b, "/responses") {
+		return b
+	}
+	return b + "/responses"
+}

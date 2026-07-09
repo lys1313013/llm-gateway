@@ -36,6 +36,7 @@ export type ProviderRecord = {
   name: string
   openai_base_url: string | null
   anthropic_base_url: string | null
+  responses_base_url: string | null
   api_key: string | null
   remark: string | null
   quota_url: string | null
@@ -462,6 +463,7 @@ const supportedProtocols = (p: ProviderRecord) => {
   const tags: { color: string; label: string }[] = []
   if (p.openai_base_url) tags.push({ color: 'green', label: 'OpenAI' })
   if (p.anthropic_base_url) tags.push({ color: 'orange', label: 'Anthropic' })
+  if (p.responses_base_url) tags.push({ color: 'blue', label: 'Responses' })
   return tags
 }
 
@@ -586,6 +588,7 @@ const ConfigProvider = () => {
       name: record.name,
       openai_base_url: record.openai_base_url,
       anthropic_base_url: record.anthropic_base_url,
+      responses_base_url: record.responses_base_url,
       api_key: record.api_key,
       remark: record.remark,
       quota_url: record.quota_url,
@@ -613,7 +616,7 @@ const ConfigProvider = () => {
   const handleSave = async () => {
     try {
       const values = await form.validateFields()
-      if (!values.openai_base_url && !values.anthropic_base_url) {
+      if (!values.openai_base_url && !values.anthropic_base_url && !values.responses_base_url) {
         message.error('请至少填写一个协议的 Base URL')
         return
       }
@@ -659,13 +662,14 @@ const ConfigProvider = () => {
     const v = form.getFieldsValue() as {
       openai_base_url?: string
       anthropic_base_url?: string
+      responses_base_url?: string
       api_key?: string
     }
     if (!v.api_key) {
       message.error('请先填写 API Key')
       return
     }
-    if (!v.openai_base_url && !v.anthropic_base_url) {
+    if (!v.openai_base_url && !v.anthropic_base_url && !v.responses_base_url) {
       message.error('请至少填写一个协议的 Base URL')
       return
     }
@@ -836,6 +840,13 @@ const ConfigProvider = () => {
               tooltip="留空表示该厂商不提供 Anthropic 协议"
             >
               <Input placeholder="如: https://dashscope.aliyuncs.com/apps/anthropic" />
+            </Form.Item>
+            <Form.Item
+              name="responses_base_url"
+              label="Responses Base URL"
+              tooltip="留空表示该厂商不提供 OpenAI Responses 协议"
+            >
+              <Input placeholder="如: https://dashscope.aliyuncs.com/compatible-mode/v1" />
             </Form.Item>
 
             <Form.Item style={{ marginBottom: 8 }}>
