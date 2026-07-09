@@ -8,6 +8,15 @@ import {
 } from '@ant-design/icons'
 import dayjs from 'dayjs'
 import JsonViewer, { DiffJsonViewer } from './JsonViewer'
+
+const protocolColor = (protocol?: string | null): string => {
+  switch (protocol) {
+    case 'anthropic': return 'orange'
+    case 'responses': return 'purple'
+    case 'openai':
+    default:          return 'blue'
+  }
+}
 import ConversationPreview from './ConversationPreview'
 import { apiFetch } from './api'
 
@@ -483,7 +492,7 @@ const SessionDetail = ({ sessionId }: Props) => {
         dataIndex: 'protocol',
         width: 100,
         render: (p?: string | null) =>
-          p ? <Tag color={p === 'anthropic' ? 'orange' : 'blue'}>{p}</Tag> : '-',
+          p ? <Tag color={protocolColor(p)}>{p}</Tag> : '-',
       },
       {
         title: '模型',
@@ -646,7 +655,7 @@ const SessionDetail = ({ sessionId }: Props) => {
                   ? Object.entries(meta.protocol_summary).map(([p, n]) => (
                       <Tag
                         key={p}
-                        color={p === 'anthropic' ? 'orange' : 'blue'}
+                        color={protocolColor(p)}
                       >{`${p}×${n}`}</Tag>
                     ))
                   : '-'}
@@ -725,7 +734,7 @@ const SessionDetail = ({ sessionId }: Props) => {
                 <Tag>{currentLog.is_stream ? 'YES' : 'NO'}</Tag>
               </Descriptions.Item>
               <Descriptions.Item label="协议">
-                <Tag color={currentLog.protocol === 'anthropic' ? 'orange' : 'blue'}>
+                <Tag color={protocolColor(currentLog.protocol)}>
                   {currentLog.protocol || '-'}
                 </Tag>
               </Descriptions.Item>

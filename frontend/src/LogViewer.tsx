@@ -37,6 +37,15 @@ type LogRecord = {
 const truncateId = (id: string, head = 8) =>
   id.length <= head + 3 ? id : `${id.slice(0, head)}…`
 
+const protocolColor = (protocol?: string | null): string => {
+  switch (protocol) {
+    case 'anthropic': return 'orange'
+    case 'responses': return 'purple'
+    case 'openai':
+    default:          return 'blue'
+  }
+}
+
 const LogViewer = () => {
   const [currentPage, setCurrentPage] = useState(1)
   const [logs, setLogs] = useState<LogRecord[]>([])
@@ -203,7 +212,7 @@ const LogViewer = () => {
         width: 100,
         render: (protocol?: string | null) => {
           if (!protocol) return '-'
-          return <Tag color={protocol === 'anthropic' ? 'orange' : 'blue'}>{protocol}</Tag>
+          return <Tag color={protocolColor(protocol)}>{protocol}</Tag>
         },
       },
       {
@@ -376,6 +385,7 @@ const LogViewer = () => {
               options={[
                 { value: 'openai', label: 'OpenAI' },
                 { value: 'anthropic', label: 'Anthropic' },
+                { value: 'responses', label: 'Responses' },
               ]}
             />
             <Select
@@ -468,7 +478,7 @@ const LogViewer = () => {
                 <Tag>{currentLog.is_stream ? 'YES' : 'NO'}</Tag>
               </Descriptions.Item>
               <Descriptions.Item label="协议">
-                <Tag color={currentLog.protocol === 'anthropic' ? 'orange' : 'blue'}>
+                <Tag color={protocolColor(currentLog.protocol)}>
                   {currentLog.protocol || '-'}
                 </Tag>
               </Descriptions.Item>
