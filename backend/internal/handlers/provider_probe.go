@@ -37,6 +37,7 @@ import (
 type TestProviderInput struct {
 	OpenAIBaseURL    *string `json:"openai_base_url"`
 	AnthropicBaseURL *string `json:"anthropic_base_url"`
+	ResponsesBaseURL *string `json:"responses_base_url"`
 	APIKey           *string `json:"api_key"`
 }
 
@@ -58,6 +59,16 @@ var defaultAnthropicModels = []string{
 	"claude-3-5-sonnet-latest",
 	"claude-3-5-sonnet-20241022",
 	"claude-3-opus-20240229",
+}
+
+// defaultResponsesModel is a best-effort guess for Responses-API-compatible
+// providers. OpenAI's own endpoint uses gpt-4o / gpt-4o-mini; DashScope
+// (阿里云百炼) accepts qwen-plus / qwen-turbo. We try a small list.
+var defaultResponsesModels = []string{
+	"gpt-4o-mini",
+	"gpt-4o",
+	"qwen-plus",
+	"qwen-turbo",
 }
 
 // ProviderConnect runs the end-to-end test and returns one result per
@@ -82,7 +93,8 @@ func ProviderConnect(c *gin.Context) {
 
 	hasOpenAI := in.OpenAIBaseURL != nil && *in.OpenAIBaseURL != ""
 	hasAnthropic := in.AnthropicBaseURL != nil && *in.AnthropicBaseURL != ""
-	if !hasOpenAI && !hasAnthropic {
+	hasResponses := in.ResponsesBaseURL != nil && *in.ResponsesBaseURL != ""
+	if !hasOpenAI && !hasAnthropic && !hasResponses {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"success": false,
 			"message": "请至少填写一个协议的 Base URL",
@@ -102,6 +114,9 @@ func ProviderConnect(c *gin.Context) {
 	}
 	if hasAnthropic {
 		results["anthropic"] = runAnthropicTest(c.Request.Context(), *in.AnthropicBaseURL, *in.APIKey)
+	}
+	if hasResponses {
+		results["responses"] = runResponsesTest(c.Request.Context(), *in.ResponsesBaseURL, *in.APIKey)
 	}
 
 	ok(c, gin.H{"results": results})
@@ -277,6 +292,62 @@ func runAnthropicTest(ctx context.Context, base, apiKey string) ProtocolTestResu
 }
 
 // ---------------------------------------------------------------------------
+// Responses API: chat "hi" with the first model that returns 2xx
+// ---------------------------------------------------------------------------
+
+func runResponsesTest(ctx context.Context, base, apiKey string) ProtocolTestResult {
+	start := time.Now()
+	target := buildResponsesTargetURL(&base)
+	for _, model := range defaultResponsesModels {
+		body := buildResponsesBody(model, "hi")
+		cfg := models.ProxyConfig{
+			TargetURL: target,
+			APIKey:    apiKey,
+			Timeout:   60,
+			Model:     model,
+			Protocol:  "responses",
+		}
+		status, respBody, err := forwardTestRequest(ctx, body, cfg)
+		if err != nil {
+			if status == 0 {
+				return ProtocolTestResult{
+					OK:        false,
+					Model:     model,
+					LatencyMs: time.Since(start).Milliseconds(),
+					Error:     err.Error(),
+				}
+			}
+			continue
+		}
+		if status == http.StatusOK {
+			content := extractResponsesContent(respBody)
+			return ProtocolTestResult{
+				OK:        content != "",
+				Model:     model,
+				LatencyMs: time.Since(start).Milliseconds(),
+				Status:    status,
+				Response:  content,
+			}
+		}
+		if status == http.StatusNotFound {
+			continue
+		}
+		return ProtocolTestResult{
+			OK:        false,
+			Model:     model,
+			LatencyMs: time.Since(start).Milliseconds(),
+			Status:    status,
+			Error:     extractUpstreamError(respBody, status),
+		}
+	}
+	return ProtocolTestResult{
+		OK:        false,
+		LatencyMs: time.Since(start).Milliseconds(),
+		Error:     "尝试所有默认模型均失败（Responses 协议无公开 models 端点，请确认该厂商支持的模型名）",
+	}
+}
+
+// ---------------------------------------------------------------------------
 // Shared helpers
 // ---------------------------------------------------------------------------
 
@@ -301,6 +372,15 @@ func buildAnthropicBody(model, userContent string, maxTokens int) []byte {
 		"model":      model,
 		"messages":   []map[string]any{{"role": "user", "content": userContent}},
 		"max_tokens": maxTokens,
+	}
+	b, _ := json.Marshal(p)
+	return b
+}
+
+func buildResponsesBody(model, userContent string) []byte {
+	p := map[string]any{
+		"model": model,
+		"input": []map[string]any{{"role": "user", "content": userContent}},
 	}
 	b, _ := json.Marshal(p)
 	return b
@@ -338,6 +418,40 @@ func extractAnthropicContent(body []byte) string {
 		}
 	}
 	return ""
+}
+
+// extractResponsesContent walks the Responses API response shape:
+//
+//	{
+//	  "output": [
+//	    { "type": "message", "content": [ { "type": "output_text", "text": "..." } ] }
+//	  ]
+//	}
+func extractResponsesContent(body []byte) string {
+	var parsed struct {
+		Output []struct {
+			Type    string `json:"type"`
+			Content []struct {
+				Type string `json:"type"`
+				Text string `json:"text"`
+			} `json:"content"`
+		} `json:"output"`
+	}
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		return ""
+	}
+	var parts []string
+	for _, item := range parsed.Output {
+		if item.Type != "message" {
+			continue
+		}
+		for _, c := range item.Content {
+			if c.Text != "" {
+				parts = append(parts, c.Text)
+			}
+		}
+	}
+	return strings.TrimSpace(strings.Join(parts, ""))
 }
 
 func extractUpstreamError(body []byte, status int) string {
@@ -381,7 +495,7 @@ func forwardTestRequest(ctx context.Context, body []byte, cfg models.ProxyConfig
 		return 0, nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	if cfg.Protocol == "openai" {
+	if cfg.Protocol == "openai" || cfg.Protocol == "responses" {
 		req.Header.Set("Authorization", "Bearer "+cfg.APIKey)
 	} else {
 		req.Header.Set("x-api-key", cfg.APIKey)

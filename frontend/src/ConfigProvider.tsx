@@ -682,6 +682,7 @@ const ConfigProvider = () => {
         body: JSON.stringify({
           openai_base_url: v.openai_base_url || undefined,
           anthropic_base_url: v.anthropic_base_url || undefined,
+          responses_base_url: v.responses_base_url || undefined,
           api_key: v.api_key,
         }),
       })
@@ -905,7 +906,8 @@ const ConfigProvider = () => {
           centered
         >
           {testResults && Object.entries(testResults).map(([proto, r]) => {
-            const protoLabel = proto === 'openai' ? 'OpenAI' : 'Anthropic'
+            const protoLabel = proto === 'openai' ? 'OpenAI' : proto === 'responses' ? 'Responses' : 'Anthropic'
+            const protoColor = proto === 'openai' ? 'green' : proto === 'responses' ? 'purple' : 'orange'
             return (
               <Alert
                 key={proto}
@@ -914,7 +916,7 @@ const ConfigProvider = () => {
                 showIcon
                 message={
                   <Space size="small" wrap>
-                    <Tag color={r.ok ? 'success' : 'error'}>{protoLabel}</Tag>
+                    <Tag color={protoColor}>{protoLabel}</Tag>
                     {r.model && <Typography.Text type="secondary" style={{ fontSize: 12 }}>model: {r.model}</Typography.Text>}
                     <Typography.Text type="secondary" style={{ fontSize: 12 }}>{r.latency_ms}ms</Typography.Text>
                     {r.status ? <Tag>{r.status}</Tag> : null}
