@@ -32,6 +32,7 @@ type LogRecord = {
   response_headers?: unknown
   error_message?: string | null
   session_id?: string | null
+  last_message_preview?: string | null
 }
 
 const truncateId = (id: string, head = 8) =>
@@ -245,12 +246,17 @@ const LogViewer = () => {
         dataIndex: 'processing_time_ms',
         key: 'processing_time_ms',
         width: 110,
-        render: (value?: number | null) => value ?? '-',
+        align: 'right',
+        render: (value?: number | null) => {
+          if (value == null) return '-'
+          return `${(value / 1000).toFixed(2)}s`
+        },
       },
       {
         title: '输入 Token',        dataIndex: 'prompt_tokens',
         key: 'prompt_tokens',
         width: 90,
+        align: 'right',
         render: (v?: number | null) => v ?? '-',
       },
       {
@@ -258,6 +264,7 @@ const LogViewer = () => {
         dataIndex: 'cache_read_input_tokens',
         key: 'cache_read_input_tokens',
         width: 90,
+        align: 'right',
         render: (v?: number | null) => v ?? '-',
       },
       {
@@ -265,6 +272,7 @@ const LogViewer = () => {
         dataIndex: 'completion_tokens',
         key: 'completion_tokens',
         width: 90,
+        align: 'right',
         render: (v?: number | null) => v ?? '-',
       },
       {
@@ -272,17 +280,38 @@ const LogViewer = () => {
         dataIndex: 'total_tokens',
         key: 'total_tokens',
         width: 90,
+        align: 'right',
         render: (v?: number | null) => v ?? '-',
       },
       {
         title: 'Token/s',
         key: 'tokens_per_sec',
         width: 90,
+        align: 'right',
         render: (_, record) => {
           const output = record.completion_tokens
           const ms = record.processing_time_ms
           if (!output || !ms || ms === 0) return '-'
           return (output / (ms / 1000)).toFixed(1)
+        },
+      },
+      {
+        title: '最近消息',
+        dataIndex: 'last_message_preview',
+        key: 'last_message_preview',
+        width: 300,
+        render: (text?: string | null) => {
+          if (!text) return <Text type="secondary">-</Text>
+          return (
+            <Tooltip title={text} mouseEnterDelay={0.4} overlayStyle={{ maxWidth: 520 }}>
+              <Text
+                ellipsis
+                style={{ maxWidth: 260, display: 'inline-block', whiteSpace: 'nowrap' }}
+              >
+                {text}
+              </Text>
+            </Tooltip>
+          )
         },
       },
       {
@@ -406,6 +435,11 @@ const LogViewer = () => {
 
       <Card>
         <Table
+          size="small"
+          components={{
+            header: { cell: (props: any) => <th {...props} style={{ ...props.style, fontSize: 12 }} /> },
+            body:   { cell: (props: any) => <td {...props} style={{ ...props.style, fontSize: 12 }} /> },
+          }}
           columns={columns}
           dataSource={logs}
           rowKey="id"
