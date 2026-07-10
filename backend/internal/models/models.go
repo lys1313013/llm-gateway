@@ -115,6 +115,7 @@ type APILog struct {
 	CacheReadInputTokens   *int            `json:"cache_read_input_tokens,omitempty"`
 	SessionID              *string         `json:"session_id,omitempty"`
 	UserID                 *int            `json:"user_id,omitempty"`
+	LastMessagePreview     *string         `json:"last_message_preview,omitempty"`
 }
 
 // ---------------------------------------------------------------------------

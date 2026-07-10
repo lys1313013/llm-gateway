@@ -90,6 +90,7 @@ func HandleOpenAI(ctx context.Context, requestData []byte, cfg models.ProxyConfi
 			Protocol:       strPtr(cfg.Protocol),
 			SessionID:      strPtrOrNil(cfg.SessionID),
 			UserID:         intPtrOrNil(cfg.UserID),
+			LastMessagePreview: extractLastMessagePreview(requestData),
 		})
 		// Pass through the upstream error
 		return resp.StatusCode, nil, io.NopCloser(strings.NewReader(string(body))), false, nil
@@ -155,7 +156,8 @@ func HandleOpenAI(ctx context.Context, requestData []byte, cfg models.ProxyConfi
 		Protocol:                 strPtr(cfg.Protocol),
 		UsageData:                norm.Raw,
 		SessionID:                strPtrOrNil(cfg.SessionID),
-		UserID:                   intPtrOrNil(cfg.UserID),
+		UserID:         intPtrOrNil(cfg.UserID),
+		LastMessagePreview: extractLastMessagePreview(requestData),
 	})
 
 	return resp.StatusCode, nil, io.NopCloser(strings.NewReader(string(body))), false, nil
@@ -247,7 +249,8 @@ func (s *openaiStreamer) finalize() {
 		Protocol:                 strPtr(s.protocol),
 		UsageData:                norm.Raw,
 		SessionID:                strPtrOrNil(s.sessionID),
-		UserID:                   intPtrOrNil(s.userID),
+		UserID:         intPtrOrNil(s.userID),
+		LastMessagePreview: extractLastMessagePreview(s.requestData),
 	})
 }
 
@@ -441,6 +444,7 @@ func logProxyError(ctx context.Context, requestData []byte, cfg models.ProxyConf
 		ErrorMessage:     strPtr(msg),
 		Protocol:         strPtr(cfg.Protocol),
 		SessionID:        strPtrOrNil(cfg.SessionID),
-		UserID:           intPtrOrNil(cfg.UserID),
+		UserID:         intPtrOrNil(cfg.UserID),
+		LastMessagePreview: extractLastMessagePreview(requestData),
 	})
 }

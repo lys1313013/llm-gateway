@@ -104,7 +104,8 @@ func initSchema(ctx context.Context) error {
 			cache_creation_input_tokens INTEGER,
 			cache_read_input_tokens INTEGER,
 			session_id VARCHAR(128),
-			user_id INTEGER REFERENCES users(id) ON DELETE SET NULL
+			user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+			last_message_preview VARCHAR(100)
 		)`,
 		`CREATE TABLE IF NOT EXISTS model_route (
 			id SERIAL PRIMARY KEY,
@@ -184,6 +185,7 @@ func initSchema(ctx context.Context) error {
 			`ALTER TABLE api_logs ADD COLUMN IF NOT EXISTS user_id INTEGER REFERENCES users(id) ON DELETE SET NULL`,
 		`ALTER TABLE users ADD COLUMN IF NOT EXISTS team_id INTEGER REFERENCES team(id) ON DELETE SET NULL`,
 		`ALTER TABLE exposed_model ADD COLUMN IF NOT EXISTS team_id INTEGER REFERENCES team(id) ON DELETE SET NULL`,
+		`ALTER TABLE api_logs ADD COLUMN IF NOT EXISTS last_message_preview VARCHAR(100)`,
 	}
 	for _, sql := range backfills {
 		if _, err := Pool.Exec(ctx, sql); err != nil {
