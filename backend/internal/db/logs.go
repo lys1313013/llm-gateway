@@ -151,9 +151,9 @@ func GetLogByID(ctx context.Context, id int) (*models.APILog, error) {
 	             request_headers, response_headers,
 	             error_message, protocol,
 	             usage_data, cache_creation_input_tokens, cache_read_input_tokens,
-	             session_id,,
+	             session_id,
+	             user_id,
 	             last_message_preview
-	             user_id
 	         FROM api_logs WHERE id = $1`, id)
 	l, err := scanLog(row)
 	if err != nil {
