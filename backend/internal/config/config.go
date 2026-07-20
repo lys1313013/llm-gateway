@@ -11,14 +11,15 @@ import (
 )
 
 type Config struct {
-	HTTPPort       int
-	DBHost         string
-	DBPort         string
-	DBName         string
-	DBUser         string
-	DBPassword     string
-	DBTimezone     string
-	JWTSecret      string
+	HTTPPort   int
+	DBHost     string
+	DBPort     string
+	DBName     string
+	DBUser     string
+	DBPassword string
+	DBTimezone string
+	JWTSecret  string
+	// JWTExpirationH 是登录 token 的有效期（小时），通过环境变量
 	JWTExpirationH int
 	LogLevel       string
 	// SessionIDHeaders 是网关按顺序扫描的 session id 请求头列表，取第一个
@@ -44,7 +45,7 @@ func Load() *Config {
 		DBPassword:       getEnv("DB_PASSWORD", "password"),
 		DBTimezone:       getEnvTZ("DB_TIMEZONE", "Asia/Shanghai"),
 		JWTSecret:        getEnv("JWT_SECRET_KEY", "dev-secret-key-change-in-production"),
-		JWTExpirationH:   getEnvInt("JWT_EXPIRATION_HOURS", 24),
+		JWTExpirationH:   getEnvInt("JWT_EXPIRATION_HOURS", 168),
 		LogLevel:         getEnv("LOG_LEVEL", "info"),
 		SessionIDHeaders: getEnvCSV("SESSION_ID_HEADERS", []string{"X-Claude-Code-Session-Id"}),
 	}

@@ -24,6 +24,7 @@ services:
       DB_PASSWORD: ${DB_PASSWORD:-password}
       DB_TIMEZONE: ${DB_TIMEZONE:-Asia/Shanghai}
       JWT_SECRET_KEY: ${JWT_SECRET_KEY:-change-me-to-a-random-secret-string}
+      JWT_EXPIRATION_HOURS: ${JWT_EXPIRATION_HOURS:-168}
       LOG_LEVEL: ${LOG_LEVEL:-info}
       SESSION_ID_HEADERS: ${SESSION_ID_HEADERS:-X-Claude-Code-Session-Id,X-Agent-Session-Id}
     ports:
