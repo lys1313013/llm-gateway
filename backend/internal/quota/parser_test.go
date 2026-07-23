@@ -110,6 +110,58 @@ func TestMiniMaxParser_StatusError(t *testing.T) {
 	}
 }
 
+func TestKimiParser_Success(t *testing.T) {
+	body := []byte(`{
+		"user": {"userId":"u1","membership":{"level":"LEVEL_BASIC"}},
+		"usage": {"limit":"100","used":"34","remaining":"66","resetTime":"2099-07-27T05:51:55.914424Z"},
+		"limits": [{"window":{"duration":300,"timeUnit":"TIME_UNIT_MINUTE"},
+			"detail":{"limit":"100","used":"2","remaining":"98","resetTime":"2099-07-22T17:51:55.914424Z"}}]
+	}`)
+	snap, err := Lookup(FormatKimi).Parse(body)
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if snap.DisplayType != DisplayTypeModelRemains {
+		t.Errorf("display_type=%q want %q", snap.DisplayType, DisplayTypeModelRemains)
+	}
+	if len(snap.Models) != 1 {
+		t.Fatalf("models len=%d want 1", len(snap.Models))
+	}
+	m := snap.Models[0]
+	if m.WeeklyUsedPct != 34 {
+		t.Errorf("weekly_used_percent=%d want 34", m.WeeklyUsedPct)
+	}
+	if m.IntervalUsedPct != 2 {
+		t.Errorf("interval_used_percent=%d want 2", m.IntervalUsedPct)
+	}
+	if m.WeeklyTotalCount == nil || *m.WeeklyTotalCount != 100 {
+		t.Errorf("weekly_total_count=%v want 100", m.WeeklyTotalCount)
+	}
+	if m.IntervalTotalCount == nil || *m.IntervalTotalCount != 100 {
+		t.Errorf("interval_total_count=%v want 100", m.IntervalTotalCount)
+	}
+	if m.WeeklyEndTime == nil || m.IntervalEndTime == nil {
+		t.Error("reset times should be parsed")
+	}
+	if m.WeeklyRemainsMs <= 0 || m.IntervalRemainsMs <= 0 {
+		t.Error("remains_ms should be positive for future reset times")
+	}
+}
+
+func TestKimiParser_EmptyPayload(t *testing.T) {
+	_, err := Lookup(FormatKimi).Parse([]byte(`{}`))
+	if err == nil {
+		t.Fatal("expected error for empty usage payload")
+	}
+}
+
+func TestKimiParser_InvalidJSON(t *testing.T) {
+	_, err := Lookup(FormatKimi).Parse([]byte("not json"))
+	if err == nil {
+		t.Fatal("expected error for invalid json")
+	}
+}
+
 func TestRegistry_UnknownFormat(t *testing.T) {
 	if Lookup("nope") != nil {
 		t.Error("expected nil for unknown format")

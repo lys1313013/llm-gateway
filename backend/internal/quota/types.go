@@ -12,6 +12,7 @@ const (
 const (
 	FormatMiniMax  = "minimax"
 	FormatDeepSeek = "deepseek"
+	FormatKimi     = "kimi"
 )
 
 // Snapshot is the unified envelope returned by the cache to handlers.

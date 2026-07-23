@@ -50,6 +50,16 @@
     "remark": ""
   },
   {
+    "id": "kimi",
+    "name": "Kimi (月之暗面)",
+    "description": "Kimi for Coding (api.kimi.com/coding)",
+    "openai_base_url": "https://api.kimi.com/coding/v1",
+    "anthropic_base_url": "",
+    "quota_url": "https://api.kimi.com/coding/v1/usages",
+    "quota_format": "kimi",
+    "remark": "支持 Coding 套餐额度查询"
+  },
+  {
     "id": "minimax",
     "name": "MiniMax",
     "description": "",
