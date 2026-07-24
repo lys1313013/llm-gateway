@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import Editor, { DiffEditor } from '@monaco-editor/react'
-import { Switch, Typography } from 'antd'
+import { Switch, Typography, theme } from 'antd'
+import { useTheme } from './theme/ThemeContext'
 
 const { Text } = Typography
 
@@ -84,6 +85,8 @@ function viewerStringify(value: unknown): string {
 
 function JsonViewer({ title, value, height = '70vh', style }: JsonViewerProps) {
   const viewerContent = parseViewerContent(value)
+  const { isDark } = useTheme()
+  const { token } = theme.useToken()
 
   return (
     <div style={{ flex: '1 1 520px', minWidth: 420, ...style }}>
@@ -99,10 +102,10 @@ function JsonViewer({ title, value, height = '70vh', style }: JsonViewerProps) {
       </div>
       <div
         style={{
-          border: '1px solid #e5e7eb',
+          border: `1px solid ${token.colorBorder}`,
           borderRadius: 8,
           overflow: 'hidden',
-          background: '#ffffff',
+          background: token.colorBgContainer,
         }}
       >
         <Editor
@@ -110,6 +113,7 @@ function JsonViewer({ title, value, height = '70vh', style }: JsonViewerProps) {
           defaultLanguage={viewerContent.language}
           language={viewerContent.language}
           value={viewerContent.content}
+          theme={isDark ? 'vs-dark' : 'vs'}
           options={{
             readOnly: true,
             minimap: { enabled: false },
@@ -123,7 +127,6 @@ function JsonViewer({ title, value, height = '70vh', style }: JsonViewerProps) {
             renderValidationDecorations: 'off',
             tabSize: 2,
           }}
-          theme="vs"
         />
       </div>
     </div>
@@ -150,6 +153,8 @@ function DiffJsonViewer({
 
   const [sideBySide, setSideBySide] = useState(true)
   const [wordWrap, setWordWrap] = useState(false)
+  const { isDark } = useTheme()
+  const { token } = theme.useToken()
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0, ...style }}>
@@ -184,10 +189,10 @@ function DiffJsonViewer({
       )}
       <div
         style={{
-          border: '1px solid #e5e7eb',
+          border: `1px solid ${token.colorBorder}`,
           borderRadius: 8,
           overflow: 'hidden',
-          background: '#ffffff',
+          background: token.colorBgContainer,
         }}
       >
         <DiffEditor
@@ -196,6 +201,7 @@ function DiffJsonViewer({
           language={language}
           original={leftStr}
           modified={rightStr}
+          theme={isDark ? 'vs-dark' : 'vs'}
           options={{
             readOnly: true,
             minimap: { enabled: false },
@@ -210,7 +216,6 @@ function DiffJsonViewer({
             renderSideBySide: sideBySide,
             useInlineViewWhenSpaceIsLimited: false,
           }}
-          theme="vs"
         />
       </div>
     </div>

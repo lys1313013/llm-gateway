@@ -26,6 +26,7 @@ import {
 import type { TableColumnsType } from 'antd'
 import dayjs from 'dayjs'
 import { apiFetch, getCurrentUser } from './api'
+import { useTheme } from './theme/ThemeContext'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -205,6 +206,7 @@ type OverviewProps = {
 }
 
 const QuotaOverviewCard = ({ entries, loading, onRefreshOne, onOpenDetail }: OverviewProps) => {
+  const { isDark } = useTheme()
   const configured = entries.filter((e) => e.has_config)
   const successCount = configured.filter((e) => e.snapshot && !e.snapshot.last_error && e.snapshot.display_type).length
   const errorCount = configured.filter((e) => e.snapshot?.last_error).length
@@ -226,9 +228,9 @@ const QuotaOverviewCard = ({ entries, loading, onRefreshOne, onOpenDetail }: Ove
         <>
           <Row gutter={16} style={{ marginBottom: 12 }}>
             <Col span={6}><Statistic title="已配置" value={configured.length} /></Col>
-            <Col span={6}><Statistic title="正常" value={successCount} valueStyle={{ color: '#16A34A' }} /></Col>
-            <Col span={6}><Statistic title="拉取中" value={pendingCount} valueStyle={{ color: '#64748B' }} /></Col>
-            <Col span={6}><Statistic title="异常" value={errorCount} valueStyle={{ color: errorCount > 0 ? '#EF4444' : '#64748B' }} /></Col>
+            <Col span={6}><Statistic title="正常" value={successCount} valueStyle={{ color: isDark ? '#4ade80' : '#16A34A' }} /></Col>
+            <Col span={6}><Statistic title="拉取中" value={pendingCount} valueStyle={{ color: isDark ? '#94a3b8' : '#64748B' }} /></Col>
+            <Col span={6}><Statistic title="异常" value={errorCount} valueStyle={{ color: errorCount > 0 ? (isDark ? '#f87171' : '#EF4444') : (isDark ? '#94a3b8' : '#64748B') }} /></Col>
           </Row>
           <Row gutter={[12, 12]}>
             {configured.map((e) => {
@@ -468,6 +470,7 @@ const supportedProtocols = (p: ProviderRecord) => {
 }
 
 const ConfigProvider = () => {
+  const { isDark } = useTheme()
   const currentUser = getCurrentUser()
   const isRoot = (currentUser?.role ?? 99) === 1
   const [data, setData] = useState<ProviderRecord[]>([])
@@ -933,7 +936,7 @@ const ConfigProvider = () => {
                   ) : (
                     <Typography.Paragraph
                       copyable={{ tooltips: ['复制错误'] }}
-                      style={{ whiteSpace: 'pre-wrap', marginBottom: 0, marginTop: 4, color: '#ff4d4f' }}
+                      style={{ whiteSpace: 'pre-wrap', marginBottom: 0, marginTop: 4, color: isDark ? '#fca5a5' : '#ff4d4f' }}
                     >
                       {r.error || '未知错误'}
                     </Typography.Paragraph>

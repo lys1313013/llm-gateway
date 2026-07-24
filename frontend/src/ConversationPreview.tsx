@@ -1,10 +1,11 @@
 import { useMemo } from 'react'
-import { Empty, Space, Tag, Tooltip, Typography } from 'antd'
+import { Empty, Space, Tag, Tooltip, Typography, theme } from 'antd'
 import {
   RobotOutlined, UserOutlined, ToolOutlined,
   PictureOutlined, CodeOutlined, BulbOutlined,
   WarningOutlined, FileSearchOutlined,
 } from '@ant-design/icons'
+import { useTheme } from './theme/ThemeContext'
 
 const { Text } = Typography
 
@@ -306,7 +307,16 @@ function buildConversation(
 // Rendering
 // ---------------------------------------------------------------------------
 
-const ROLE_META: Record<Role, { label: string; color: string; bg: string; avatarBg: string; icon: React.ReactNode; align: 'left' | 'right' | 'center' }> = {
+type RoleMeta = {
+  label: string
+  color: string
+  bg: string
+  avatarBg: string
+  icon: React.ReactNode
+  align: 'left' | 'right' | 'center'
+}
+
+const ROLE_META_LIGHT: Record<Role, RoleMeta> = {
   system:    { label: 'system',    color: '#6b7280', bg: '#f3f4f6', avatarBg: '#9ca3af', icon: <RobotOutlined />,         align: 'center' },
   user:      { label: 'user',      color: '#1d4ed8', bg: '#eff6ff', avatarBg: '#3b82f6', icon: <UserOutlined />,          align: 'right'  },
   assistant: { label: 'assistant', color: '#15803d', bg: '#f0fdf4', avatarBg: '#22c55e', icon: <RobotOutlined />,         align: 'left'   },
@@ -314,8 +324,21 @@ const ROLE_META: Record<Role, { label: string; color: string; bg: string; avatar
   unknown:   { label: 'unknown',   color: '#6b7280', bg: '#f9fafb', avatarBg: '#9ca3af', icon: <FileSearchOutlined />,   align: 'left'   },
 }
 
+const ROLE_META_DARK: Record<Role, RoleMeta> = {
+  system:    { label: 'system',    color: '#9ca3af', bg: '#27272a', avatarBg: '#52525b', icon: <RobotOutlined />,         align: 'center' },
+  user:      { label: 'user',      color: '#60a5fa', bg: '#172554', avatarBg: '#1d4ed8', icon: <UserOutlined />,          align: 'right'  },
+  assistant: { label: 'assistant', color: '#4ade80', bg: '#14532d', avatarBg: '#15803d', icon: <RobotOutlined />,         align: 'left'   },
+  tool:      { label: 'tool',      color: '#fb923c', bg: '#431407', avatarBg: '#c2410c', icon: <ToolOutlined />,          align: 'left'   },
+  unknown:   { label: 'unknown',   color: '#9ca3af', bg: '#27272a', avatarBg: '#52525b', icon: <FileSearchOutlined />,   align: 'left'   },
+}
+
+function getRoleMeta(role: Role, isDark: boolean): RoleMeta {
+  return (isDark ? ROLE_META_DARK : ROLE_META_LIGHT)[role]
+}
+
 function AvatarBubble({ role }: { role: Role }) {
-  const meta = ROLE_META[role]
+  const { isDark } = useTheme()
+  const meta = getRoleMeta(role, isDark)
   return (
     <div
       style={{
@@ -337,7 +360,8 @@ function AvatarBubble({ role }: { role: Role }) {
 }
 
 function RoleTag({ role }: { role: Role }) {
-  const meta = ROLE_META[role]
+  const { isDark } = useTheme()
+  const meta = getRoleMeta(role, isDark)
   return (
     <Tag
       color={meta.color}
@@ -349,6 +373,7 @@ function RoleTag({ role }: { role: Role }) {
 }
 
 function TextBlock({ text }: { text: string }) {
+  const { token } = theme.useToken()
   const trimmed = text || '(空)'
   return (
     <div
@@ -357,7 +382,7 @@ function TextBlock({ text }: { text: string }) {
         wordBreak: 'break-word',
         fontSize: 13,
         lineHeight: 1.6,
-        color: '#1f2937',
+        color: token.colorText,
       }}
     >
       {trimmed}
@@ -366,6 +391,7 @@ function TextBlock({ text }: { text: string }) {
 }
 
 function ImageBlock({ mediaType }: { mediaType?: string }) {
+  const { isDark } = useTheme()
   return (
     <div
       style={{
@@ -373,11 +399,11 @@ function ImageBlock({ mediaType }: { mediaType?: string }) {
         alignItems: 'center',
         gap: 6,
         padding: '4px 10px',
-        background: '#fef3c7',
-        border: '1px solid #fde68a',
+        background: isDark ? '#422006' : '#fef3c7',
+        border: `1px solid ${isDark ? '#713f12' : '#fde68a'}`,
         borderRadius: 6,
         fontSize: 12,
-        color: '#92400e',
+        color: isDark ? '#fbbf24' : '#92400e',
       }}
     >
       <PictureOutlined />
@@ -387,16 +413,17 @@ function ImageBlock({ mediaType }: { mediaType?: string }) {
 }
 
 function ThinkingBlock({ text }: { text: string }) {
+  const { isDark } = useTheme()
   if (!text) return null
   return (
     <div
       style={{
         padding: '6px 10px',
-        background: '#f5f3ff',
-        border: '1px dashed #c4b5fd',
+        background: isDark ? '#2e1065' : '#f5f3ff',
+        border: `1px dashed ${isDark ? '#6d28d9' : '#c4b5fd'}`,
         borderRadius: 6,
         fontSize: 12,
-        color: '#5b21b6',
+        color: isDark ? '#c4b5fd' : '#5b21b6',
         fontStyle: 'italic',
         whiteSpace: 'pre-wrap',
         wordBreak: 'break-word',
@@ -409,19 +436,21 @@ function ThinkingBlock({ text }: { text: string }) {
 }
 
 function ToolUseBlock({ name, input, id }: { name: string; input: unknown; id?: string }) {
+  const { isDark } = useTheme()
+  const { token } = theme.useToken()
   return (
     <div
       style={{
-        border: '1px solid #fcd34d',
-        background: '#fffbeb',
+        border: `1px solid ${isDark ? '#78350f' : '#fcd34d'}`,
+        background: isDark ? '#451a03' : '#fffbeb',
         borderRadius: 6,
         padding: '8px 10px',
         fontSize: 12,
       }}
     >
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
-        <CodeOutlined style={{ color: '#b45309' }} />
-        <Text strong style={{ color: '#92400e', fontSize: 12 }}>
+        <CodeOutlined style={{ color: isDark ? '#fbbf24' : '#b45309' }} />
+        <Text strong style={{ color: isDark ? '#fcd34d' : '#92400e', fontSize: 12 }}>
           工具调用: {name}
         </Text>
         {id && (
@@ -435,7 +464,7 @@ function ToolUseBlock({ name, input, id }: { name: string; input: unknown; id?: 
           style={{
             margin: 0,
             padding: '6px 8px',
-            background: 'rgba(0,0,0,0.04)',
+            background: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)',
             borderRadius: 4,
             fontSize: 11.5,
             fontFamily: 'monospace',
@@ -443,6 +472,7 @@ function ToolUseBlock({ name, input, id }: { name: string; input: unknown; id?: 
             maxHeight: 240,
             whiteSpace: 'pre-wrap',
             wordBreak: 'break-word',
+            color: token.colorText,
           }}
         >
           {safeStringify(input)}
@@ -453,22 +483,24 @@ function ToolUseBlock({ name, input, id }: { name: string; input: unknown; id?: 
 }
 
 function ToolCallsBlock({ calls }: { calls: ToolCall[] }) {
+  const { isDark } = useTheme()
+  const { token } = theme.useToken()
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
       {calls.map((c, i) => (
         <div
           key={c.id ?? `${c.name}-${i}`}
           style={{
-            border: '1px solid #fcd34d',
-            background: '#fffbeb',
+            border: `1px solid ${isDark ? '#78350f' : '#fcd34d'}`,
+            background: isDark ? '#451a03' : '#fffbeb',
             borderRadius: 6,
             padding: '8px 10px',
             fontSize: 12,
           }}
         >
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
-            <CodeOutlined style={{ color: '#b45309' }} />
-            <Text strong style={{ color: '#92400e', fontSize: 12 }}>
+            <CodeOutlined style={{ color: isDark ? '#fbbf24' : '#b45309' }} />
+            <Text strong style={{ color: isDark ? '#fcd34d' : '#92400e', fontSize: 12 }}>
               工具调用: {c.name}
             </Text>
             {c.id && (
@@ -482,7 +514,7 @@ function ToolCallsBlock({ calls }: { calls: ToolCall[] }) {
               style={{
                 margin: 0,
                 padding: '6px 8px',
-                background: 'rgba(0,0,0,0.04)',
+                background: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)',
                 borderRadius: 4,
                 fontSize: 11.5,
                 fontFamily: 'monospace',
@@ -490,6 +522,7 @@ function ToolCallsBlock({ calls }: { calls: ToolCall[] }) {
                 maxHeight: 240,
                 whiteSpace: 'pre-wrap',
                 wordBreak: 'break-word',
+                color: token.colorText,
               }}
             >
               {c.args}
@@ -502,11 +535,13 @@ function ToolCallsBlock({ calls }: { calls: ToolCall[] }) {
 }
 
 function ToolResultBlock({ content, isError, toolUseId }: { content: string; isError?: boolean; toolUseId?: string }) {
+  const { isDark } = useTheme()
+  const { token } = theme.useToken()
   return (
     <div
       style={{
-        border: `1px solid ${isError ? '#fecaca' : '#fed7aa'}`,
-        background: isError ? '#fef2f2' : '#fff7ed',
+        border: `1px solid ${isDark ? (isError ? '#7f1d1d' : '#78350f') : (isError ? '#fecaca' : '#fed7aa')}`,
+        background: isDark ? (isError ? '#450a0a' : '#451a03') : (isError ? '#fef2f2' : '#fff7ed'),
         borderRadius: 6,
         padding: '8px 10px',
         fontSize: 12,
@@ -514,11 +549,11 @@ function ToolResultBlock({ content, isError, toolUseId }: { content: string; isE
     >
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
         {isError ? (
-          <WarningOutlined style={{ color: '#dc2626' }} />
+          <WarningOutlined style={{ color: isDark ? '#f87171' : '#dc2626' }} />
         ) : (
-          <ToolOutlined style={{ color: '#c2410c' }} />
+          <ToolOutlined style={{ color: isDark ? '#fb923c' : '#c2410c' }} />
         )}
-        <Text strong style={{ color: isError ? '#991b1b' : '#9a3412', fontSize: 12 }}>
+        <Text strong style={{ color: isDark ? (isError ? '#fca5a5' : '#fcd34d') : (isError ? '#991b1b' : '#9a3412'), fontSize: 12 }}>
           工具结果{isError ? ' (错误)' : ''}
         </Text>
         {toolUseId && (
@@ -531,7 +566,7 @@ function ToolResultBlock({ content, isError, toolUseId }: { content: string; isE
         style={{
           margin: 0,
           padding: '6px 8px',
-          background: 'rgba(0,0,0,0.04)',
+          background: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)',
           borderRadius: 4,
           fontSize: 11.5,
           fontFamily: 'monospace',
@@ -539,7 +574,7 @@ function ToolResultBlock({ content, isError, toolUseId }: { content: string; isE
           maxHeight: 240,
           whiteSpace: 'pre-wrap',
           wordBreak: 'break-word',
-          color: isError ? '#7f1d1d' : '#1f2937',
+          color: isError ? (isDark ? '#fecaca' : '#7f1d1d') : token.colorText,
         }}
       >
         {content || '(空)'}
@@ -549,11 +584,13 @@ function ToolResultBlock({ content, isError, toolUseId }: { content: string; isE
 }
 
 function UnknownBlock({ raw }: { raw: unknown }) {
+  const { isDark } = useTheme()
+  const { token } = theme.useToken()
   return (
     <div
       style={{
-        border: '1px dashed #d1d5db',
-        background: '#f9fafb',
+        border: `1px dashed ${isDark ? token.colorBorder : '#d1d5db'}`,
+        background: isDark ? '#1f1f1f' : '#f9fafb',
         borderRadius: 6,
         padding: '6px 8px',
         fontSize: 12,
@@ -564,13 +601,14 @@ function UnknownBlock({ raw }: { raw: unknown }) {
         style={{
           margin: '4px 0 0 0',
           padding: '4px 6px',
-          background: 'rgba(0,0,0,0.03)',
+          background: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)',
           borderRadius: 4,
           fontSize: 11,
           fontFamily: 'monospace',
           maxHeight: 200,
           overflow: 'auto',
           whiteSpace: 'pre-wrap',
+          color: token.colorText,
         }}
       >
         {safeStringify(raw)}
@@ -592,7 +630,8 @@ function Block({ block }: { block: ContentBlock }) {
 }
 
 function MessageBubble({ message }: { message: Message }) {
-  const meta = ROLE_META[message.role]
+  const { isDark } = useTheme()
+  const meta = getRoleMeta(message.role, isDark)
   const isUser = meta.align === 'right'
   const isSystem = meta.align === 'center'
   const visibleBlocks = message.blocks.filter((b) => !(b.kind === 'text' && !b.text.trim()))
@@ -604,7 +643,7 @@ function MessageBubble({ message }: { message: Message }) {
           style={{
             maxWidth: '92%',
             background: meta.bg,
-            border: `1px solid ${meta.color}22`,
+            border: `1px solid ${meta.color}33`,
             borderRadius: 8,
             padding: '8px 12px',
           }}
@@ -635,7 +674,7 @@ function MessageBubble({ message }: { message: Message }) {
         style={{
           maxWidth: '78%',
           background: meta.bg,
-          border: `1px solid ${meta.color}22`,
+          border: `1px solid ${meta.color}33`,
           borderRadius: 8,
           padding: '8px 12px',
         }}
@@ -652,6 +691,7 @@ function MessageBubble({ message }: { message: Message }) {
 }
 
 function ConversationPreview({ requestData, responseData, protocol }: Props) {
+  const { token } = theme.useToken()
   const messages = useMemo(
     () => buildConversation(requestData, responseData, protocol),
     [requestData, responseData, protocol],
@@ -698,9 +738,9 @@ function ConversationPreview({ requestData, responseData, protocol }: Props) {
       </div>
       <div
         style={{
-          border: '1px solid #e5e7eb',
+          border: `1px solid ${token.colorBorder}`,
           borderRadius: 8,
-          background: '#fafafa',
+          background: token.colorBgContainer,
           padding: 12,
           flex: 1,
           minHeight: 320,

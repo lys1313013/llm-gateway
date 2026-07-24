@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Button, Card, Form, Input, message, Typography } from 'antd'
+import { Button, Card, Form, Input, message, Typography, theme } from 'antd'
 import { UserOutlined, LockOutlined } from '@ant-design/icons'
 import { setToken } from './api'
 
@@ -11,6 +11,7 @@ interface RegisterProps {
 
 const Register = ({ onRegister }: RegisterProps) => {
   const [loading, setLoading] = useState(false)
+  const { token } = theme.useToken()
 
   const onFinish = async (values: { username: string; password: string }) => {
     setLoading(true)
@@ -44,14 +45,14 @@ const Register = ({ onRegister }: RegisterProps) => {
       display: 'flex',
       justifyContent: 'center',
       alignItems: 'center',
-      background: '#f0f2f5',
+      background: token.colorBgLayout,
     }}>
-      <Card style={{ width: 400, boxShadow: '0 2px 8px rgba(0,0,0,0.09)' }}>
+      <Card style={{ width: 400, boxShadow: token.boxShadow }}>
         <div style={{ textAlign: 'center', marginBottom: 32 }}>
-          <Title level={3} style={{ color: '#1890ff', margin: 0 }}>
+          <Title level={3} style={{ color: token.colorPrimary, margin: 0 }}>
             LLM Gateway
           </Title>
-          <p style={{ color: '#999', marginTop: 8 }}>注册新账号</p>
+          <p style={{ color: token.colorTextSecondary, marginTop: 8 }}>注册新账号</p>
         </div>
         <Form name="register" onFinish={onFinish} size="large">
           <Form.Item

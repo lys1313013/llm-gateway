@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Button, Card, Form, Input, message, Typography } from 'antd'
+import { Button, Card, Form, Input, message, Typography, theme } from 'antd'
 import { UserOutlined, LockOutlined } from '@ant-design/icons'
 import { setToken } from './api'
 
@@ -11,6 +11,7 @@ interface LoginProps {
 
 const Login = ({ onLogin }: LoginProps) => {
   const [loading, setLoading] = useState(false)
+  const { token } = theme.useToken()
 
   const onFinish = async (values: { username: string; password: string }) => {
     setLoading(true)
@@ -41,14 +42,14 @@ const Login = ({ onLogin }: LoginProps) => {
       display: 'flex',
       justifyContent: 'center',
       alignItems: 'center',
-      background: '#f0f2f5',
+      background: token.colorBgLayout,
     }}>
-      <Card style={{ width: 400, boxShadow: '0 2px 8px rgba(0,0,0,0.09)' }}>
+      <Card style={{ width: 400, boxShadow: token.boxShadow }}>
         <div style={{ textAlign: 'center', marginBottom: 32 }}>
-          <Title level={3} style={{ color: '#1890ff', margin: 0 }}>
+          <Title level={3} style={{ color: token.colorPrimary, margin: 0 }}>
             LLM Gateway
           </Title>
-          <p style={{ color: '#999', marginTop: 8 }}>统一大模型 API 网关</p>
+          <p style={{ color: token.colorTextSecondary, marginTop: 8 }}>统一大模型 API 网关</p>
         </div>
         <Form name="login" onFinish={onFinish} size="large">
           <Form.Item name="username" rules={[{ required: true, message: '请输入用户名' }]}>

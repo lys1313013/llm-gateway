@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
-  Alert, Button, Card, Checkbox, Col, Descriptions, Empty, Modal, Popconfirm, Row, Space, Statistic, Table, Tag, Typography, message,
+  Alert, Button, Card, Checkbox, Col, Descriptions, Empty, Modal, Popconfirm, Row, Space, Statistic, Table, Tag, Typography, message, theme,
 } from 'antd'
 import type { TableColumnsType } from 'antd'
 import {
@@ -8,6 +8,7 @@ import {
 } from '@ant-design/icons'
 import dayjs from 'dayjs'
 import JsonViewer, { DiffJsonViewer } from './JsonViewer'
+import { useTheme } from './theme/ThemeContext'
 
 const protocolColor = (protocol?: string | null): string => {
   switch (protocol) {
@@ -101,13 +102,19 @@ type CompareToolbarProps = {
 
 const CompareToolbar = ({ selectedIds, onClear, onCompare }: CompareToolbarProps) => {
   const ready = selectedIds.length === 2
+  const { isDark } = useTheme()
+  const { token } = theme.useToken()
   return (
     <div
       style={{
         marginBottom: 12,
         padding: '8px 12px',
-        background: ready ? '#eff6ff' : '#fafafa',
-        border: `1px solid ${ready ? '#bfdbfe' : '#e5e7eb'}`,
+        background: ready
+          ? (isDark ? '#172554' : '#eff6ff')
+          : (isDark ? '#1f1f1f' : '#fafafa'),
+        border: `1px solid ${ready
+          ? (isDark ? '#1e40af' : '#bfdbfe')
+          : token.colorBorder}`,
         borderRadius: 6,
         display: 'flex',
         alignItems: 'center',
@@ -246,6 +253,8 @@ const buildCompareMetaItems = (left: LogDetail, right: LogDetail): CompareMetaIt
 
 const CompareMetaCard = ({ left, right }: CompareMetaCardProps) => {
   if (!left || !right) return null
+  const { isDark } = useTheme()
+  const { token } = theme.useToken()
   const items = buildCompareMetaItems(left, right)
   return (
     <Row gutter={[12, 0]} wrap>
@@ -254,22 +263,22 @@ const CompareMetaCard = ({ left, right }: CompareMetaCardProps) => {
         const cellStyle: React.CSSProperties = {
           padding: '6px 10px',
           borderRadius: 4,
-          background: same ? 'transparent' : '#fef3c7',
-          color: same ? undefined : '#92400e',
+          background: same ? 'transparent' : (isDark ? '#422006' : '#fef3c7'),
+          color: same ? undefined : (isDark ? '#fcd34d' : '#92400e'),
           fontSize: 12,
           minWidth: 0,
           wordBreak: 'break-word',
         }
         return (
           <Col key={item.key} xs={24} sm={12} md={8} lg={6} xl={4} style={{ marginBottom: 8 }}>
-            <div style={{ fontSize: 11, color: '#6b7280', marginBottom: 2 }}>{item.label}</div>
+            <div style={{ fontSize: 11, color: token.colorTextSecondary, marginBottom: 2 }}>{item.label}</div>
             <div style={{ display: 'flex', gap: 6, alignItems: 'stretch' }}>
               <div style={{ ...cellStyle, flex: 1 }}>
-                <span style={{ fontSize: 10, color: '#3b82f6', marginRight: 4 }}>A</span>
+                <span style={{ fontSize: 10, color: isDark ? '#60a5fa' : '#3b82f6', marginRight: 4 }}>A</span>
                 {item.a}
               </div>
               <div style={{ ...cellStyle, flex: 1 }}>
-                <span style={{ fontSize: 10, color: '#f97316', marginRight: 4 }}>B</span>
+                <span style={{ fontSize: 10, color: isDark ? '#fb923c' : '#f97316', marginRight: 4 }}>B</span>
                 {item.b}
               </div>
             </div>

@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
-import { Button, Card, Dropdown, Form, Input, Modal, Popconfirm, Progress, Select, Space, Switch, Table, Tag, Typography, message } from 'antd'
+import { Button, Card, Dropdown, Form, Input, Modal, Popconfirm, Progress, Select, Space, Switch, Table, Tag, Typography, message, theme } from 'antd'
 import { DownOutlined, LoadingOutlined, ThunderboltOutlined } from '@ant-design/icons'
 import type { TableColumnsType } from 'antd'
 import dayjs from 'dayjs'
 import { apiFetch, getCurrentUser } from './api'
+import { useTheme } from './theme/ThemeContext'
 
 export type ExposedModelRecord = {
   id: number
@@ -115,6 +116,8 @@ async function runWithConcurrency<T>(
 }
 
 const ConfigExposedModel = () => {
+  const { isDark } = useTheme()
+  const { token } = theme.useToken()
   const currentUser = getCurrentUser()
   const isRoot = (currentUser?.role ?? 99) === 1
   const [data, setData] = useState<ExposedModelRecord[]>([])
@@ -561,11 +564,12 @@ const ConfigExposedModel = () => {
               <Text strong>响应内容：</Text>
               <Paragraph
                 style={{
-                  background: '#f5f5f5',
+                  background: isDark ? '#262626' : '#f5f5f5',
                   padding: 12,
                   borderRadius: 6,
                   marginTop: 4,
                   whiteSpace: 'pre-wrap',
+                  color: token.colorText,
                 }}
               >
                 {testResult.content || '(空)'}
@@ -573,14 +577,14 @@ const ConfigExposedModel = () => {
             </div>
             {testResult.error && (
               <div>
-                <Text strong style={{ color: '#ff4d4f' }}>错误信息：</Text>
+                <Text strong style={{ color: isDark ? '#f87171' : '#ff4d4f' }}>错误信息：</Text>
                 <Paragraph
                   style={{
-                    background: '#fff2f0',
+                    background: isDark ? '#450a0a' : '#fff2f0',
                     padding: 12,
                     borderRadius: 6,
                     marginTop: 4,
-                    color: '#ff4d4f',
+                    color: isDark ? '#fca5a5' : '#ff4d4f',
                     whiteSpace: 'pre-wrap',
                   }}
                 >

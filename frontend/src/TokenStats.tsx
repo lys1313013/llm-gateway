@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Card, Col, DatePicker, Row, Statistic, Table, Typography, message } from 'antd'
+import { Card, Col, DatePicker, Row, Statistic, Table, Typography, message, theme } from 'antd'
 import type { TableColumnsType } from 'antd'
 import { Column, Pie } from '@ant-design/plots'
 import dayjs from 'dayjs'
@@ -38,6 +38,7 @@ const TokenStats = () => {
   const [modelData, setModelData] = useState<ModelStat[]>([])
   const [hourlyData, setHourlyData] = useState<HourlyStat[]>([])
   const [loading, setLoading] = useState(false)
+  const { token } = theme.useToken()
 
   // Default range: today
   const [dateRange, setDateRange] = useState<[Dayjs | null, Dayjs | null]>([
@@ -313,7 +314,7 @@ const TokenStats = () => {
               hourlyData.some(h => h.request_count > 0) ? (
                 <Column {...hourlyConfig} />
               ) : (
-                <div style={{ height: 400, display: 'flex', justifyContent: 'center', alignItems: 'center', color: '#999' }}>
+                <div style={{ height: 400, display: 'flex', justifyContent: 'center', alignItems: 'center', color: token.colorTextQuaternary }}>
                   暂无数据
                 </div>
               )
@@ -321,7 +322,7 @@ const TokenStats = () => {
               dailyData.length > 0 ? (
                 <Column {...config} />
               ) : (
-                <div style={{ height: 400, display: 'flex', justifyContent: 'center', alignItems: 'center', color: '#999' }}>
+                <div style={{ height: 400, display: 'flex', justifyContent: 'center', alignItems: 'center', color: token.colorTextQuaternary }}>
                   暂无数据
                 </div>
               )
@@ -333,7 +334,7 @@ const TokenStats = () => {
             {modelData.length > 0 ? (
               <Pie {...pieConfig} />
             ) : (
-              <div style={{ height: 400, display: 'flex', justifyContent: 'center', alignItems: 'center', color: '#999' }}>
+              <div style={{ height: 400, display: 'flex', justifyContent: 'center', alignItems: 'center', color: token.colorTextQuaternary }}>
                 暂无数据
               </div>
             )}

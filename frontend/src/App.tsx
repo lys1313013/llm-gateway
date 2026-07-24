@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Layout, Menu, Typography, Button, Dropdown } from 'antd'
+import { Layout, Menu, Typography, Button, Dropdown, Tooltip, theme } from 'antd'
 import {
   FileTextOutlined,
   BarChartOutlined,
@@ -12,6 +12,8 @@ import {
   LockOutlined,
   ClusterOutlined,
   TeamOutlined,
+  BulbOutlined,
+  BulbFilled,
 } from '@ant-design/icons'
 import TokenStats from './TokenStats'
 import ConfigProvider from './ConfigProvider'
@@ -27,6 +29,7 @@ import SessionDetail from './SessionDetail'
 import UserManagement from './UserManagement'
 import TeamManagement from './TeamManagement'
 import { isAuthenticated, removeToken, getCurrentUser } from './api'
+import { useTheme } from './theme/ThemeContext'
 
 const { Content } = Layout
 const { Title } = Typography
@@ -68,6 +71,8 @@ const contentMap: Record<PageKey, React.ReactNode> = {
 }
 
 const App = () => {
+  const { isDark, toggle: toggleTheme } = useTheme()
+  const { token } = theme.useToken()
   const [authed, setAuthed] = useState(() => isAuthenticated())
   const [hashRoute, setHashRoute] = useState<HashRoute>(() => getHashRoute())
 
@@ -175,21 +180,33 @@ const App = () => {
       <div
         style={{
           width: 200,
-          background: '#fff',
+          background: token.colorBgContainer,
           position: 'fixed',
           left: 0,
           top: 0,
           bottom: 0,
-          borderRight: '1px solid #e8e8e8',
+          borderRight: `1px solid ${token.colorBorderSecondary}`,
           display: 'flex',
           flexDirection: 'column',
           overflow: 'hidden',
         }}
       >
         <div style={{ padding: '20px 16px', textAlign: 'center', flexShrink: 0 }}>
-          <Title level={4} style={{ color: '#1890ff', margin: 0 }}>
-            LLM Gateway
-          </Title>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+            <Title level={4} style={{ color: token.colorPrimary, margin: 0, flex: 1, textAlign: 'left' }}>
+              LLM Gateway
+            </Title>
+            <Tooltip title={isDark ? '切换到亮色模式' : '切换到暗色模式'}>
+              <Button
+                type="text"
+                size="small"
+                icon={isDark ? <BulbFilled /> : <BulbOutlined />}
+                onClick={toggleTheme}
+                aria-label="切换主题"
+                style={{ color: token.colorTextSecondary }}
+              />
+            </Tooltip>
+          </div>
         </div>
         <div style={{ flex: 1, overflowY: 'auto' }}>
           <Menu
@@ -198,10 +215,10 @@ const App = () => {
             defaultOpenKeys={openKeys}
             onClick={handleMenuClick}
             items={menuItems}
-            style={{ border: 'none' }}
+            style={{ border: 'none', background: 'transparent' }}
           />
         </div>
-        <div style={{ borderTop: '1px solid #f0f0f0', padding: '8px 12px', flexShrink: 0 }}>
+        <div style={{ borderTop: `1px solid ${token.colorBorderSecondary}`, padding: '8px 12px', flexShrink: 0 }}>
           <Dropdown menu={{ items: userMenuItems }} placement="topLeft">
             <Button
               type="text"
@@ -218,8 +235,8 @@ const App = () => {
           </Dropdown>
         </div>
       </div>
-      <Layout style={{ marginLeft: 200 }}>
-        <Content style={{ padding: 24, background: '#f0f2f5', minHeight: '100vh' }}>
+      <Layout style={{ marginLeft: 200, background: token.colorBgLayout }}>
+        <Content style={{ padding: 24, background: token.colorBgLayout, minHeight: '100vh' }}>
           {isSessionDetail ? <SessionDetail sessionId={hashRoute.id!} /> : contentMap[activeKey]}
         </Content>
       </Layout>
