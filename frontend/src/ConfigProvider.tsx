@@ -757,16 +757,16 @@ const ConfigProvider = () => {
         if (!entry || !entry.has_config) return <Typography.Text type="secondary">未配置</Typography.Text>
         const sum = summarizeSnapshot(entry.snapshot)
         return (
-          <Space size={4}>
-            <Tag color={sum.tone === 'success' ? 'green' : sum.tone === 'warning' ? 'orange' : sum.tone === 'error' ? 'red' : 'default'}>
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 2 }}>
+            <Tag style={{ whiteSpace: 'normal', marginInlineEnd: 0 }} color={sum.tone === 'success' ? 'green' : sum.tone === 'warning' ? 'orange' : sum.tone === 'error' ? 'red' : 'default'}>
               {sum.text}
             </Tag>
             {entry.snapshot?.fetched_at && (
-              <Typography.Text type="secondary" style={{ fontSize: 11 }}>
+              <Typography.Text type="secondary" style={{ fontSize: 11, whiteSpace: 'nowrap' }}>
                 {dayjs(entry.snapshot.fetched_at).format('HH:mm:ss')}
               </Typography.Text>
             )}
-          </Space>
+          </div>
         )
       },
     },
