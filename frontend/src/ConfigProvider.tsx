@@ -24,6 +24,7 @@ import {
   message,
 } from 'antd'
 import type { TableColumnsType } from 'antd'
+import { ClockCircleOutlined } from '@ant-design/icons'
 import dayjs from 'dayjs'
 import { apiFetch, getCurrentUser } from './api'
 import { useTheme } from './theme/ThemeContext'
@@ -128,6 +129,18 @@ const formatTime = (ms?: number): string => {
   return `${totalSec}秒`
 }
 
+// Compact duration for inline quota display: 3h20m / 1d22h / 45m.
+const formatDurationCompact = (ms?: number): string => {
+  if (!ms || ms <= 0) return ''
+  const totalMin = Math.floor(ms / 60000)
+  const day = Math.floor(totalMin / 1440)
+  const hr = Math.floor((totalMin % 1440) / 60)
+  const min = totalMin % 60
+  if (day > 0) return `${day}d${hr}h`
+  if (hr > 0) return `${hr}h${min}m`
+  return `${min}m`
+}
+
 const quotaStatusColor = (pct: number): string => {
   if (pct >= 90) return '#EF4444'
   if (pct >= 70) return '#F59E0B'
@@ -142,11 +155,12 @@ const summarizeSnapshot = (s?: QuotaSnapshot): { text: string; tone: 'success' |
     return { text: `${s.balance.currency} ${s.balance.total}`, tone: 'success' }
   }
   if (s.display_type === 'model_remains' && s.models && s.models.length > 0) {
-    const intervalMax = s.models.reduce((m, x) => Math.max(m, x.interval_used_percent), 0)
-    const weeklyMax = s.models.reduce((m, x) => Math.max(m, x.weekly_used_percent), 0)
-    const worst = Math.max(intervalMax, weeklyMax)
+    const agg = aggregateModels(s.models)
+    const worst = Math.max(agg.interval.usedPct, agg.weekly.usedPct)
+    const iRem = formatDurationCompact(agg.interval.remainsMs)
+    const wRem = formatDurationCompact(agg.weekly.remainsMs)
     return {
-      text: `5h ${intervalMax}% · 本周 ${weeklyMax}%`,
+      text: `5h ${agg.interval.usedPct}%${iRem ? ` ${iRem}` : ''} · 本周 ${agg.weekly.usedPct}%${wRem ? ` ${wRem}` : ''}`,
       tone: worst >= 90 ? 'error' : worst >= 70 ? 'warning' : 'success',
     }
   }
@@ -400,30 +414,35 @@ const ModelRemainsView = ({ models }: { models: QuotaModel[] }) => {
   )
 }
 
+const CycleLine = ({ label, pct, remainsMs }: { label: string; pct: number; remainsMs?: number }) => {
+  const rem = formatDurationCompact(remainsMs)
+  return (
+    <>
+      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 2 }}>
+        <Typography.Text type="secondary" style={{ fontSize: 11 }}>{label}</Typography.Text>
+        <Typography.Text style={{ fontSize: 11 }}>
+          {pct}%
+          {rem && (
+            <Typography.Text type="secondary" style={{ fontSize: 11, marginLeft: 6 }}>
+              <ClockCircleOutlined style={{ marginRight: 2 }} />
+              {rem}
+            </Typography.Text>
+          )}
+        </Typography.Text>
+      </div>
+      <Progress percent={pct} strokeColor={quotaStatusColor(pct)} size="small" showInfo={false} />
+    </>
+  )
+}
+
 const DualProgressLine = ({ models }: { models: QuotaModel[] }) => {
   const agg = aggregateModels(models)
   return (
     <div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 2 }}>
-        <Typography.Text type="secondary" style={{ fontSize: 11 }}>5h</Typography.Text>
-        <Typography.Text style={{ fontSize: 11 }}>{agg.interval.usedPct}%</Typography.Text>
+      <CycleLine label="5h" pct={agg.interval.usedPct} remainsMs={agg.interval.remainsMs} />
+      <div style={{ marginTop: 6 }}>
+        <CycleLine label="本周" pct={agg.weekly.usedPct} remainsMs={agg.weekly.remainsMs} />
       </div>
-      <Progress
-        percent={agg.interval.usedPct}
-        strokeColor={quotaStatusColor(agg.interval.usedPct)}
-        size="small"
-        showInfo={false}
-      />
-      <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 6, marginBottom: 2 }}>
-        <Typography.Text type="secondary" style={{ fontSize: 11 }}>本周</Typography.Text>
-        <Typography.Text style={{ fontSize: 11 }}>{agg.weekly.usedPct}%</Typography.Text>
-      </div>
-      <Progress
-        percent={agg.weekly.usedPct}
-        strokeColor={quotaStatusColor(agg.weekly.usedPct)}
-        size="small"
-        showInfo={false}
-      />
     </div>
   )
 }
