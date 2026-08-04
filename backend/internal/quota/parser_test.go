@@ -148,6 +148,85 @@ func TestKimiParser_Success(t *testing.T) {
 	}
 }
 
+// Regression: Kimi rounds "used" up to equal the limit near full usage; the
+// percent must come from remaining, not a rounded-up 100.
+func TestKimiParser_UsedRoundedUp_StillBelowLimit(t *testing.T) {
+	body := []byte(`{
+		"usage": {"limit":"100","used":"100","remaining":"1","resetTime":"2099-07-27T05:51:55.914424Z"},
+		"limits": []
+	}`)
+	snap, err := Lookup(FormatKimi).Parse(body)
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	m := snap.Models[0]
+	if m.WeeklyUsedPct != 99 {
+		t.Errorf("weekly_used_percent=%d want 99 (derived from remaining=1)", m.WeeklyUsedPct)
+	}
+	if m.WeeklyUsageCount == nil || *m.WeeklyUsageCount != 99 {
+		t.Errorf("weekly_usage_count=%v want 99", m.WeeklyUsageCount)
+	}
+	if m.WeeklyTotalCount == nil || *m.WeeklyTotalCount != 100 {
+		t.Errorf("weekly_total_count=%v want 100", m.WeeklyTotalCount)
+	}
+}
+
+// Fractional counters: used=99.63 of 100 is 99%, never 100.
+func TestKimiParser_FractionalRemaining(t *testing.T) {
+	body := []byte(`{
+		"usage": {"limit":"100","used":"100","remaining":"0.37","resetTime":"2099-07-27T05:51:55.914424Z"},
+		"limits": []
+	}`)
+	snap, err := Lookup(FormatKimi).Parse(body)
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	m := snap.Models[0]
+	if m.WeeklyUsedPct >= 100 {
+		t.Errorf("weekly_used_percent=%d want <100 for remaining=0.37", m.WeeklyUsedPct)
+	}
+}
+
+// Real Kimi response: usage has only integer used=limit and no remaining.
+// Near-full usage rounds up to the limit, so a cycle that hasn't reset yet
+// must not read as a hard 100%.
+func TestKimiParser_IntegerUsedCappedBelow100(t *testing.T) {
+	body := []byte(`{
+		"usage": {"limit":"100","used":"100","resetTime":"2099-07-27T05:51:55.914424Z"},
+		"limits": []
+	}`)
+	snap, err := Lookup(FormatKimi).Parse(body)
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	m := snap.Models[0]
+	if m.WeeklyUsedPct != 99 {
+		t.Errorf("weekly_used_percent=%d want 99 (used rounded up to limit, cycle still open)", m.WeeklyUsedPct)
+	}
+	if m.WeeklyRemainsMs <= 0 {
+		t.Error("weekly_remains_ms should be positive for a future reset time")
+	}
+}
+
+// used absent: must fall back to limit - remaining instead of 0%.
+func TestKimiParser_MissingUsed(t *testing.T) {
+	body := []byte(`{
+		"usage": {"limit":"100","remaining":"26","resetTime":"2099-07-27T05:51:55.914424Z"},
+		"limits": []
+	}`)
+	snap, err := Lookup(FormatKimi).Parse(body)
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	m := snap.Models[0]
+	if m.WeeklyUsedPct != 74 {
+		t.Errorf("weekly_used_percent=%d want 74 (100-remaining)", m.WeeklyUsedPct)
+	}
+	if m.WeeklyUsageCount == nil || *m.WeeklyUsageCount != 74 {
+		t.Errorf("weekly_usage_count=%v want 74", m.WeeklyUsageCount)
+	}
+}
+
 func TestKimiParser_EmptyPayload(t *testing.T) {
 	_, err := Lookup(FormatKimi).Parse([]byte(`{}`))
 	if err == nil {

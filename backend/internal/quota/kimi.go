@@ -3,6 +3,7 @@ package quota
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"strconv"
 	"time"
 )
@@ -29,6 +30,7 @@ type kimiResponse struct {
 type kimiUsage struct {
 	Limit     string `json:"limit"`
 	Used      string `json:"used"`
+	Remaining string `json:"remaining"`
 	ResetTime string `json:"resetTime"`
 }
 
@@ -84,11 +86,29 @@ type kimiCycleStat struct {
 
 // kimiCycle converts one usage/detail block (string counters + RFC3339
 // reset time) into display-ready stats. ok is false when nothing parses.
+//
+// remaining is authoritative: Kimi's "used" is often absent and, near the
+// boundary, rounded up to equal the limit, which would otherwise read as a
+// false 100%. Counters may be fractional, so parse them as floats.
 func kimiCycle(u kimiUsage, now time.Time) (s kimiCycleStat, ok bool) {
-	s.used, _ = strconv.ParseInt(u.Used, 10, 64)
-	s.limit, _ = strconv.ParseInt(u.Limit, 10, 64)
-	if s.limit > 0 {
-		s.usedPct = int(s.used * 100 / s.limit)
+	limit, _ := strconv.ParseFloat(u.Limit, 64)
+	used, _ := strconv.ParseFloat(u.Used, 64)
+	remaining, _ := strconv.ParseFloat(u.Remaining, 64)
+	if limit <= 0 {
+		return s, false
+	}
+	if remaining > 0 {
+		used = limit - remaining
+	}
+	if used > limit {
+		used = limit
+	}
+
+	s.limit = int64(limit)
+	s.used = int64(math.Floor(used))
+	s.usedPct = int(math.Floor(used / limit * 100))
+	if s.usedPct > 100 {
+		s.usedPct = 100
 	}
 	if t, err := time.Parse(time.RFC3339Nano, u.ResetTime); err == nil {
 		s.resetAt = &t
@@ -96,7 +116,14 @@ func kimiCycle(u kimiUsage, now time.Time) (s kimiCycleStat, ok bool) {
 			s.remainsMs = d.Milliseconds()
 		}
 	}
-	return s, u.Limit != "" || u.Used != ""
+	// used/limit are integers; near the boundary used rounds up to the limit
+	// (e.g. 99.63% -> "100") while the cycle still has time left. A cycle
+	// that hasn't reset yet can't be fully exhausted, so report 99 rather
+	// than a false 100%.
+	if s.usedPct >= 100 && s.remainsMs > 0 {
+		s.usedPct = 99
+	}
+	return s, true
 }
 
 func init() {
