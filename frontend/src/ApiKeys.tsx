@@ -134,30 +134,42 @@ const ApiKeys = () => {
     }
   }
 
-  const copyText = (text: string) => {
-    if (navigator.clipboard && window.isSecureContext) {
-      navigator.clipboard.writeText(text).then(() => {
-        message.success('已复制到剪贴板')
-      }).catch(() => {
-        fallbackCopy(text)
-      })
-    } else {
-      fallbackCopy(text)
+  const copyText = async (text: string) => {
+    if (!text) {
+      message.warning('没有可复制的内容')
+      return
     }
-  }
-
-  const fallbackCopy = (text: string) => {
+    // 确保窗口有焦点，clipboard API 依赖用户激活 / 焦点
+    try { window.focus() } catch { /* ignore */ }
+    // 优先使用现代 Clipboard API
+    if (navigator.clipboard && window.isSecureContext) {
+      try {
+        await navigator.clipboard.writeText(text)
+        message.success('已复制到剪贴板')
+        return
+      } catch {
+        // 降级到 fallback
+      }
+    }
+    // Fallback: 临时 textarea + execCommand
     const textarea = document.createElement('textarea')
     textarea.value = text
-    textarea.style.position = 'fixed'
-    textarea.style.opacity = '0'
+    // 不能 display:none / visibility:hidden，否则 select() 可能失败
+    textarea.style.cssText = 'position:fixed;left:-9999px;top:-9999px;opacity:0'
+    textarea.setAttribute('readonly', '')
     document.body.appendChild(textarea)
-    textarea.select()
     try {
-      document.execCommand('copy')
-      message.success('已复制到剪贴板')
+      textarea.focus()
+      textarea.select()
+      textarea.setSelectionRange(0, text.length)
+      const ok = document.execCommand('copy')
+      if (ok) {
+        message.success('已复制到剪贴板')
+      } else {
+        message.warning('自动复制失败，请手动复制')
+      }
     } catch {
-      message.error('复制失败，请手动复制')
+      message.warning('自动复制失败，请手动复制')
     } finally {
       document.body.removeChild(textarea)
     }
