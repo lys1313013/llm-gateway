@@ -97,8 +97,14 @@ func kimiCycle(u kimiUsage, now time.Time) (s kimiCycleStat, ok bool) {
 	if limit <= 0 {
 		return s, false
 	}
-	if remaining > 0 {
+	// remaining is authoritative when present: Kimi's "used" can round up to
+	// the limit near the boundary, producing a false 100%. When remaining is
+	// absent, trust "used" verbatim — it may represent genuinely exhausted
+	// quota (used == limit), which must not be masked.
+	fromRemaining := false
+	if u.Remaining != "" && remaining > 0 {
 		used = limit - remaining
+		fromRemaining = true
 	}
 	if used > limit {
 		used = limit
@@ -116,11 +122,10 @@ func kimiCycle(u kimiUsage, now time.Time) (s kimiCycleStat, ok bool) {
 			s.remainsMs = d.Milliseconds()
 		}
 	}
-	// used/limit are integers; near the boundary used rounds up to the limit
-	// (e.g. 99.63% -> "100") while the cycle still has time left. A cycle
-	// that hasn't reset yet can't be fully exhausted, so report 99 rather
-	// than a false 100%.
-	if s.usedPct >= 100 && s.remainsMs > 0 {
+	// Only apply the 99% cap when used was derived from an authoritative
+	// remaining field. When remaining is absent and used==limit, the cycle
+	// is genuinely exhausted — report 100%.
+	if fromRemaining && s.usedPct >= 100 && s.remainsMs > 0 {
 		s.usedPct = 99
 	}
 	return s, true

@@ -187,10 +187,10 @@ func TestKimiParser_FractionalRemaining(t *testing.T) {
 	}
 }
 
-// Real Kimi response: usage has only integer used=limit and no remaining.
-// Near-full usage rounds up to the limit, so a cycle that hasn't reset yet
-// must not read as a hard 100%.
-func TestKimiParser_IntegerUsedCappedBelow100(t *testing.T) {
+// Real Kimi response: usage has integer used==limit and no remaining field.
+// Without an authoritative remaining, used==limit means genuinely exhausted —
+// must report 100%, not be masked to 99%.
+func TestKimiParser_IntegerUsedEqualsLimit_IsExhausted(t *testing.T) {
 	body := []byte(`{
 		"usage": {"limit":"100","used":"100","resetTime":"2099-07-27T05:51:55.914424Z"},
 		"limits": []
@@ -200,11 +200,45 @@ func TestKimiParser_IntegerUsedCappedBelow100(t *testing.T) {
 		t.Fatalf("unexpected err: %v", err)
 	}
 	m := snap.Models[0]
-	if m.WeeklyUsedPct != 99 {
-		t.Errorf("weekly_used_percent=%d want 99 (used rounded up to limit, cycle still open)", m.WeeklyUsedPct)
+	if m.WeeklyUsedPct != 100 {
+		t.Errorf("weekly_used_percent=%d want 100 (used==limit, no remaining)", m.WeeklyUsedPct)
+	}
+	if m.WeeklyUsageCount == nil || *m.WeeklyUsageCount != 100 {
+		t.Errorf("weekly_usage_count=%v want 100", m.WeeklyUsageCount)
 	}
 	if m.WeeklyRemainsMs <= 0 {
 		t.Error("weekly_remains_ms should be positive for a future reset time")
+	}
+}
+
+// Full real-world response: usage exhausted (used==limit, no remaining) plus
+// a short sliding window with remaining>0. Weekly must be 100%, interval
+// derived from remaining.
+func TestKimiParser_FullResponse_UsageExhausted(t *testing.T) {
+	body := []byte(`{
+		"user": {"userId":"u1","membership":{"level":"LEVEL_INTERMEDIATE"}},
+		"usage": {"limit":"100","used":"100","resetTime":"2099-08-25T08:02:21.039284Z"},
+		"limits": [{"window":{"duration":300,"timeUnit":"TIME_UNIT_MINUTE"},
+			"detail":{"limit":"100","remaining":"100","resetTime":"2099-08-25T06:02:21.039284Z"}}],
+		"parallel": {"limit":"20"}
+	}`)
+	snap, err := Lookup(FormatKimi).Parse(body)
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	m := snap.Models[0]
+	if m.WeeklyUsedPct != 100 {
+		t.Errorf("weekly_used_percent=%d want 100", m.WeeklyUsedPct)
+	}
+	if m.WeeklyUsageCount == nil || *m.WeeklyUsageCount != 100 {
+		t.Errorf("weekly_usage_count=%v want 100", m.WeeklyUsageCount)
+	}
+	// interval: remaining==limit → used=0
+	if m.IntervalUsedPct != 0 {
+		t.Errorf("interval_used_percent=%d want 0", m.IntervalUsedPct)
+	}
+	if m.IntervalUsageCount == nil || *m.IntervalUsageCount != 0 {
+		t.Errorf("interval_usage_count=%v want 0", m.IntervalUsageCount)
 	}
 }
 
