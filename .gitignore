@@ -1,5 +1,6 @@
 # Environment variables
 docker/.env
+backend/.env
 .env.local
 *.env.bak.*
 *.env.*.bak

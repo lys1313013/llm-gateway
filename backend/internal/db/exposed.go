@@ -14,10 +14,11 @@ import (
 // Exposed model
 // ---------------------------------------------------------------------------
 
-const exposedSelectCols = `id, model_id, owned_by, is_active, team_id, last_openai_test_time, last_anthropic_test_time, create_time, update_time`
+const exposedSelectCols = `id, model_id, owned_by, is_active, team_id, last_openai_test_time, last_anthropic_test_time, last_openai_test_status, last_anthropic_test_status, create_time, update_time`
 
 const exposedWithTeamCols = `e.id, e.model_id, e.owned_by, e.is_active, e.team_id, COALESCE(t.name, ''),
 	e.last_openai_test_time, e.last_anthropic_test_time,
+	e.last_openai_test_status, e.last_anthropic_test_status,
 	e.create_time, e.update_time`
 
 func GetExposedModels(ctx context.Context) ([]models.ExposedModel, error) {
@@ -125,17 +126,19 @@ func DeleteExposedModel(ctx context.Context, id int) error {
 	return nil
 }
 
-func UpdateExposedModelTestTime(ctx context.Context, id int, protocol string) (*models.ExposedModel, error) {
-	col := "last_openai_test_time"
+func UpdateExposedModelTestTime(ctx context.Context, id int, protocol string, status string) (*models.ExposedModel, error) {
+	timeCol := "last_openai_test_time"
+	statusCol := "last_openai_test_status"
 	if protocol == "anthropic" {
-		col = "last_anthropic_test_time"
+		timeCol = "last_anthropic_test_time"
+		statusCol = "last_anthropic_test_status"
 	}
 	row := mustHavePool().QueryRow(ctx, fmt.Sprintf(`
 		UPDATE exposed_model
-		   SET %s = $2, update_time = CURRENT_TIMESTAMP
+		   SET %s = $2, %s = $3, update_time = CURRENT_TIMESTAMP
 		 WHERE id = $1
-		RETURNING `+exposedSelectCols, col),
-		id, time.Now())
+		RETURNING `+exposedSelectCols, timeCol, statusCol),
+		id, time.Now(), status)
 	m, err := scanExposedModel(row)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
@@ -155,6 +158,7 @@ func scanExposedModel(row rowScanner) (*models.ExposedModel, error) {
 	err := row.Scan(&m.ID, &m.ModelID, &m.OwnedBy, &m.IsActive,
 		&m.TeamID,
 		&m.LastOpenAITestTime, &m.LastAnthropicTestTime,
+		&m.LastOpenAITestStatus, &m.LastAnthropicTestStatus,
 		&m.CreateTime, &m.UpdateTime)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -177,6 +181,7 @@ func scanExposedModels(rows interface {
 		if err := rows.Scan(&m.ID, &m.ModelID, &m.OwnedBy, &m.IsActive,
 			&m.TeamID,
 			&m.LastOpenAITestTime, &m.LastAnthropicTestTime,
+			&m.LastOpenAITestStatus, &m.LastAnthropicTestStatus,
 			&m.CreateTime, &m.UpdateTime); err != nil {
 			return nil, fmt.Errorf("scan exposed list: %w", err)
 		}
@@ -231,6 +236,7 @@ func scanExposedModelWithTeam(row rowScanner) (*models.ExposedModel, error) {
 	err := row.Scan(&m.ID, &m.ModelID, &m.OwnedBy, &m.IsActive,
 		&m.TeamID, &m.TeamName,
 		&m.LastOpenAITestTime, &m.LastAnthropicTestTime,
+		&m.LastOpenAITestStatus, &m.LastAnthropicTestStatus,
 		&m.CreateTime, &m.UpdateTime)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -253,6 +259,7 @@ func scanExposedModelsWithTeam(rows interface {
 		if err := rows.Scan(&m.ID, &m.ModelID, &m.OwnedBy, &m.IsActive,
 			&m.TeamID, &m.TeamName,
 			&m.LastOpenAITestTime, &m.LastAnthropicTestTime,
+			&m.LastOpenAITestStatus, &m.LastAnthropicTestStatus,
 			&m.CreateTime, &m.UpdateTime); err != nil {
 			return nil, fmt.Errorf("scan exposed list with team: %w", err)
 		}

@@ -128,6 +128,8 @@ func initSchema(ctx context.Context) error {
 			is_active BOOLEAN DEFAULT TRUE,
 			last_openai_test_time TIMESTAMP WITH TIME ZONE,
 			last_anthropic_test_time TIMESTAMP WITH TIME ZONE,
+			last_openai_test_status VARCHAR(16),
+			last_anthropic_test_status VARCHAR(16),
 			create_time TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
 			update_time TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 		)`,
@@ -181,10 +183,12 @@ func initSchema(ctx context.Context) error {
 		`ALTER TABLE provider ADD COLUMN IF NOT EXISTS quota_format VARCHAR(32)`,
 		`ALTER TABLE provider ADD COLUMN IF NOT EXISTS responses_base_url VARCHAR(255)`,
 		`ALTER TABLE api_logs ADD COLUMN IF NOT EXISTS session_id VARCHAR(128)`,
-			`ALTER TABLE users ADD COLUMN IF NOT EXISTS role INTEGER NOT NULL DEFAULT 3`,
-			`ALTER TABLE api_logs ADD COLUMN IF NOT EXISTS user_id INTEGER REFERENCES users(id) ON DELETE SET NULL`,
+		`ALTER TABLE users ADD COLUMN IF NOT EXISTS role INTEGER NOT NULL DEFAULT 3`,
+		`ALTER TABLE api_logs ADD COLUMN IF NOT EXISTS user_id INTEGER REFERENCES users(id) ON DELETE SET NULL`,
 		`ALTER TABLE users ADD COLUMN IF NOT EXISTS team_id INTEGER REFERENCES team(id) ON DELETE SET NULL`,
 		`ALTER TABLE exposed_model ADD COLUMN IF NOT EXISTS team_id INTEGER REFERENCES team(id) ON DELETE SET NULL`,
+		`ALTER TABLE exposed_model ADD COLUMN IF NOT EXISTS last_openai_test_status VARCHAR(16)`,
+		`ALTER TABLE exposed_model ADD COLUMN IF NOT EXISTS last_anthropic_test_status VARCHAR(16)`,
 		`ALTER TABLE api_logs ADD COLUMN IF NOT EXISTS last_message_preview VARCHAR(100)`,
 	}
 	for _, sql := range backfills {
@@ -198,7 +202,7 @@ func initSchema(ctx context.Context) error {
 	// is missing the column.
 	indexes := []string{
 		`CREATE INDEX IF NOT EXISTS idx_api_logs_session_id ON api_logs(session_id) WHERE session_id IS NOT NULL`,
-			`CREATE INDEX IF NOT EXISTS idx_api_logs_user_id_created_at ON api_logs(user_id, created_at DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_api_logs_user_id_created_at ON api_logs(user_id, created_at DESC)`,
 		`CREATE INDEX IF NOT EXISTS idx_users_team_id ON users(team_id) WHERE team_id IS NOT NULL`,
 		`CREATE INDEX IF NOT EXISTS idx_exposed_model_team_id ON exposed_model(team_id) WHERE team_id IS NOT NULL`,
 	}

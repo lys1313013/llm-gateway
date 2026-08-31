@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Button, Card, Dropdown, Form, Input, Modal, Popconfirm, Progress, Select, Space, Switch, Table, Tag, Typography, message, theme } from 'antd'
+import { Button, Card, Dropdown, Form, Input, Modal, Popconfirm, Progress, Select, Space, Switch, Table, Tag, Tooltip, Typography, message, theme } from 'antd'
 import { DownOutlined, LoadingOutlined, ThunderboltOutlined } from '@ant-design/icons'
 import type { TableColumnsType } from 'antd'
 import dayjs from 'dayjs'
@@ -15,6 +15,8 @@ export type ExposedModelRecord = {
   team_name: string
   last_openai_test_time: string | null
   last_anthropic_test_time: string | null
+  last_openai_test_status: string | null
+  last_anthropic_test_status: string | null
   create_time: string
   update_time: string
 }
@@ -94,6 +96,19 @@ async function runSingleTest(
       error: e instanceof Error ? e.message : '请求失败',
     }
   }
+}
+
+/** Persist a test outcome (success/failed) to the backend. */
+async function reportTestResult(
+  modelDbId: number,
+  protocol: 'openai' | 'anthropic',
+  ok: boolean,
+): Promise<void> {
+  await apiFetch(`/api/exposed_model/${modelDbId}/test_time`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ protocol, status: ok ? 'success' : 'failed' }),
+  })
 }
 
 /** Run tasks with a concurrency limit. Each task is a thunk that returns a promise. */
@@ -249,17 +264,11 @@ const ConfigExposedModel = () => {
       const result = await runSingleTest(record, protocol)
       setTestResult(result)
 
-      if (!result.error && result.status === 200) {
-        try {
-          await apiFetch(`/api/exposed_model/${record.id}/test_time`, {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ protocol }),
-          })
-          void fetchData()
-        } catch (e) {
-          console.error('[test_time update failed]', e)
-        }
+      try {
+        await reportTestResult(record.id, protocol, !result.error && result.status === 200)
+        void fetchData()
+      } catch (e) {
+        console.error('[test_time update failed]', e)
       }
     } finally {
       setTesting(false)
@@ -322,14 +331,10 @@ const ConfigExposedModel = () => {
     ).then(async (results) => {
       if (!batchRunningRef.current) return
 
-      // Batch update test_time for successful results
-      const successResults = results.filter((r) => r.status === 200 && !r.error)
-      const updatePromises = successResults.map((r) =>
-        apiFetch(`/api/exposed_model/${r.modelDbId}/test_time`, {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ protocol: r.protocol }),
-        }).catch((e) => console.error('[test_time update failed]', e)),
+      // Persist test outcome (success/failed) for every result
+      const updatePromises = results.map((r) =>
+        reportTestResult(r.modelDbId, r.protocol, r.status === 200 && !r.error)
+          .catch((e) => console.error('[test_time update failed]', e)),
       )
       await Promise.all(updatePromises)
       void fetchData()
@@ -339,7 +344,14 @@ const ConfigExposedModel = () => {
     })
   }
 
-  const formatTestTime = (t: string | null) => {
+  const formatTestTime = (t: string | null, status: string | null) => {
+    if (status === 'failed') {
+      return (
+        <Tooltip title={t ? `失败于 ${dayjs(t).format('YYYY-MM-DD HH:mm:ss')}` : '测试失败'}>
+          <Tag color="error">失败</Tag>
+        </Tooltip>
+      )
+    }
     if (!t) return <Tag color="default">未测试</Tag>
     return <Tag color="success">{dayjs(t).format('YYYY-MM-DD HH:mm:ss')}</Tag>
   }
@@ -368,14 +380,14 @@ const ConfigExposedModel = () => {
       dataIndex: 'last_openai_test_time',
       width: 120,
       align: 'center',
-      render: (t: string | null) => formatTestTime(t),
+      render: (t: string | null, record: ExposedModelRecord) => formatTestTime(t, record.last_openai_test_status),
     },
     {
       title: 'Anthropic 测试',
       dataIndex: 'last_anthropic_test_time',
       width: 120,
       align: 'center',
-      render: (t: string | null) => formatTestTime(t),
+      render: (t: string | null, record: ExposedModelRecord) => formatTestTime(t, record.last_anthropic_test_status),
     },
     { title: '更新时间', dataIndex: 'update_time', width: 170, render: (t) => dayjs(t).format('YYYY-MM-DD HH:mm:ss') },
     {

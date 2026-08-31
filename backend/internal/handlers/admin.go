@@ -302,6 +302,7 @@ func UpdateExposedModelTestTime(c *gin.Context) {
 	id, _ := strconv.Atoi(c.Param("id"))
 	var in struct {
 		Protocol string `json:"protocol"`
+		Status   string `json:"status"`
 	}
 	if !bindJSON(c, &in) {
 		return
@@ -313,7 +314,17 @@ func UpdateExposedModelTestTime(c *gin.Context) {
 		})
 		return
 	}
-	m, err := db.UpdateExposedModelTestTime(c.Request.Context(), id, in.Protocol)
+	if in.Status == "" {
+		in.Status = "success"
+	}
+	if in.Status != "success" && in.Status != "failed" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"message": "status must be success or failed",
+		})
+		return
+	}
+	m, err := db.UpdateExposedModelTestTime(c.Request.Context(), id, in.Protocol, in.Status)
 	if err != nil {
 		serverError(c, err)
 		return
@@ -653,9 +664,9 @@ func DailyTokenStats(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{
 			"success": true,
 			"data": gin.H{
-				"hourly":       hourly,
-				"daily":        []any{},
-				"models":       models,
+				"hourly":        hourly,
+				"daily":         []any{},
+				"models":        models,
 				"is_single_day": true,
 			},
 		})
@@ -675,9 +686,9 @@ func DailyTokenStats(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"data": gin.H{
-			"hourly":       []any{},
-			"daily":        daily,
-			"models":       models,
+			"hourly":        []any{},
+			"daily":         daily,
+			"models":        models,
 			"is_single_day": false,
 		},
 	})
