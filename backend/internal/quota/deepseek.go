@@ -9,12 +9,12 @@ import (
 // deepseekResponse mirrors the JSON returned by
 // https://api.deepseek.com/user/balance
 type deepseekResponse struct {
-	IsAvailable bool `json:"is_available"`
+	IsAvailable  bool `json:"is_available"`
 	BalanceInfos []struct {
-		Currency         string `json:"currency"`
-		TotalBalance     string `json:"total_balance"`
-		GrantedBalance   string `json:"granted_balance"`
-		ToppedUpBalance  string `json:"topped_up_balance"`
+		Currency        string `json:"currency"`
+		TotalBalance    string `json:"total_balance"`
+		GrantedBalance  string `json:"granted_balance"`
+		ToppedUpBalance string `json:"topped_up_balance"`
 	} `json:"balance_infos"`
 }
 

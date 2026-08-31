@@ -68,5 +68,15 @@
     "quota_url": "https://www.minimaxi.com/v1/api/openplatform/coding_plan/remains",
     "quota_format": "minimax",
     "remark": ""
+  },
+  {
+    "id": "opencode-go",
+    "name": "OpenCode Go",
+    "description": "OpenCode Go 订阅 (opencode.ai/zen/go)",
+    "openai_base_url": "https://opencode.ai/zen/go/v1",
+    "anthropic_base_url": "https://opencode.ai/zen/go",
+    "quota_url": "https://opencode.ai/zen/go/v1/usage",
+    "quota_format": "opencode_go",
+    "remark": "支持订阅用量查询（5h/周/月三窗口，百分比）"
   }
 ]

@@ -63,6 +63,9 @@ type QuotaModel = {
   weekly_remains_ms?: number
   weekly_start_time?: string
   weekly_end_time?: string
+  monthly_used_percent?: number
+  monthly_remains_ms?: number
+  monthly_end_time?: string
 }
 
 type QuotaBalance = {
@@ -96,6 +99,8 @@ type ProviderQuotaEntry = {
 const QUOTA_FORMATS = [
   { value: 'minimax', label: 'MiniMax (按模型配额)' },
   { value: 'deepseek', label: 'DeepSeek (账户余额)' },
+  { value: 'kimi', label: 'Kimi (Coding 套餐)' },
+  { value: 'opencode_go', label: 'OpenCode Go (订阅用量)' },
 ] as const
 
 const QUOTA_POLL_INTERVAL_MS = 30_000
@@ -156,19 +161,22 @@ const summarizeSnapshot = (s?: QuotaSnapshot): { text: string; tone: 'success' |
   }
   if (s.display_type === 'model_remains' && s.models && s.models.length > 0) {
     const agg = aggregateModels(s.models)
-    const worst = Math.max(agg.interval.usedPct, agg.weekly.usedPct)
+    const worst = Math.max(agg.interval.usedPct, agg.weekly.usedPct, agg.monthly?.usedPct ?? 0)
     const iRem = formatDurationCompact(agg.interval.remainsMs)
     const wRem = formatDurationCompact(agg.weekly.remainsMs)
+    const mRem = formatDurationCompact(agg.monthly?.remainsMs)
+    const monthlyPart = agg.monthly ? ` · 本月 ${agg.monthly.usedPct}%${mRem ? ` ${mRem}` : ''}` : ''
     return {
-      text: `5h ${agg.interval.usedPct}%${iRem ? ` ${iRem}` : ''} · 本周 ${agg.weekly.usedPct}%${wRem ? ` ${wRem}` : ''}`,
+      text: `5h ${agg.interval.usedPct}%${iRem ? ` ${iRem}` : ''} · 本周 ${agg.weekly.usedPct}%${wRem ? ` ${wRem}` : ''}${monthlyPart}`,
       tone: worst >= 90 ? 'error' : worst >= 70 ? 'warning' : 'success',
     }
   }
   return { text: '—', tone: 'default' }
 }
 
-// Aggregates per-model quota into a single 5h / weekly view. Uses the
-// max-used-percent across models so the worst-case cycle is what shows.
+// Aggregates per-model quota into a single 5h / weekly (/ monthly) view.
+// Uses the max-used-percent across models so the worst-case cycle is what
+// shows. Monthly only appears when at least one model reports it.
 type AggregatedCycle = {
   usedPct: number
   usage?: number
@@ -181,13 +189,18 @@ type AggregatedCycle = {
 type AggregatedQuota = {
   interval: AggregatedCycle
   weekly: AggregatedCycle
+  monthly?: AggregatedCycle
 }
 
 const aggregateModels = (models: QuotaModel[]): AggregatedQuota => {
-  const pickMax = (ms: QuotaModel[], key: 'interval_used_percent' | 'weekly_used_percent'): QuotaModel =>
-    ms.reduce((acc, x) => (x[key] > acc[key] ? x : acc), ms[0])
+  const pickMax = (ms: QuotaModel[], key: 'interval_used_percent' | 'weekly_used_percent' | 'monthly_used_percent'): QuotaModel =>
+    ms.reduce((acc, x) => ((x[key] ?? 0) > (acc[key] ?? 0) ? x : acc), ms[0])
   const interval = pickMax(models, 'interval_used_percent')
   const weekly = pickMax(models, 'weekly_used_percent')
+  // Monthly is optional (only OpenCode Go exposes it) — skip entirely when
+  // no model reports it, so other providers render unchanged.
+  const withMonthly = models.filter((m) => m.monthly_used_percent !== undefined)
+  const monthly = withMonthly.length > 0 ? pickMax(withMonthly, 'monthly_used_percent') : undefined
   return {
     interval: {
       usedPct: interval.interval_used_percent,
@@ -205,6 +218,13 @@ const aggregateModels = (models: QuotaModel[]): AggregatedQuota => {
       end: weekly.weekly_end_time,
       remainsMs: weekly.weekly_remains_ms,
     },
+    ...(monthly && {
+      monthly: {
+        usedPct: monthly.monthly_used_percent ?? 0,
+        end: monthly.monthly_end_time,
+        remainsMs: monthly.monthly_remains_ms,
+      },
+    }),
   }
 }
 
@@ -410,6 +430,14 @@ const ModelRemainsView = ({ models }: { models: QuotaModel[] }) => {
         total={agg.weekly.total}
         remainsMs={agg.weekly.remainsMs}
       />
+      {agg.monthly && (
+        <ProgressBlock
+          label="本月用量"
+          pct={agg.monthly.usedPct}
+          end={agg.monthly.end}
+          remainsMs={agg.monthly.remainsMs}
+        />
+      )}
     </Space>
   )
 }
@@ -443,6 +471,11 @@ const DualProgressLine = ({ models }: { models: QuotaModel[] }) => {
       <div style={{ marginTop: 6 }}>
         <CycleLine label="本周" pct={agg.weekly.usedPct} remainsMs={agg.weekly.remainsMs} />
       </div>
+      {agg.monthly && (
+        <div style={{ marginTop: 6 }}>
+          <CycleLine label="本月" pct={agg.monthly.usedPct} remainsMs={agg.monthly.remainsMs} />
+        </div>
+      )}
     </div>
   )
 }

@@ -10,9 +10,10 @@ const (
 
 // Format identifiers (the value stored in provider.quota_format).
 const (
-	FormatMiniMax  = "minimax"
-	FormatDeepSeek = "deepseek"
-	FormatKimi     = "kimi"
+	FormatMiniMax    = "minimax"
+	FormatDeepSeek   = "deepseek"
+	FormatKimi       = "kimi"
+	FormatOpenCodeGo = "opencode_go"
 )
 
 // Snapshot is the unified envelope returned by the cache to handlers.
@@ -46,6 +47,12 @@ type ModelQuota struct {
 	WeeklyRemainsMs  int64      `json:"weekly_remains_ms,omitempty"`
 	WeeklyStartTime  *time.Time `json:"weekly_start_time,omitempty"`
 	WeeklyEndTime    *time.Time `json:"weekly_end_time,omitempty"`
+
+	// Monthly cycle is optional — only OpenCode Go exposes one. UsedPct is a
+	// pointer so a genuine 0% is distinguishable from "window absent".
+	MonthlyUsedPct   *int       `json:"monthly_used_percent,omitempty"`
+	MonthlyRemainsMs int64      `json:"monthly_remains_ms,omitempty"`
+	MonthlyEndTime   *time.Time `json:"monthly_end_time,omitempty"`
 }
 
 // BalanceSnapshot captures DeepSeek-style single-account balance.

@@ -275,6 +275,86 @@ func TestKimiParser_InvalidJSON(t *testing.T) {
 	}
 }
 
+func TestOpenCodeGoParser_Success(t *testing.T) {
+	body := []byte(`{
+		"usage": {
+			"rolling": {"status":"ok","percent":9,"resetsAt":"2099-08-31T10:00:00Z"},
+			"weekly":  {"status":"ok","percent":12,"resetsAt":"2099-09-06T00:00:00Z"},
+			"monthly": {"status":"ok","percent":6,"resetsAt":"2099-09-30T00:00:00Z"}
+		}
+	}`)
+	snap, err := Lookup(FormatOpenCodeGo).Parse(body)
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if snap.DisplayType != DisplayTypeModelRemains {
+		t.Errorf("display_type=%q want %q", snap.DisplayType, DisplayTypeModelRemains)
+	}
+	if len(snap.Models) != 1 {
+		t.Fatalf("models len=%d want 1", len(snap.Models))
+	}
+	m := snap.Models[0]
+	if m.IntervalUsedPct != 9 {
+		t.Errorf("interval_used_percent=%d want 9", m.IntervalUsedPct)
+	}
+	if m.WeeklyUsedPct != 12 {
+		t.Errorf("weekly_used_percent=%d want 12", m.WeeklyUsedPct)
+	}
+	if m.MonthlyUsedPct == nil || *m.MonthlyUsedPct != 6 {
+		t.Errorf("monthly_used_percent=%v want 6", m.MonthlyUsedPct)
+	}
+	if m.IntervalRemainsMs <= 0 || m.WeeklyRemainsMs <= 0 || m.MonthlyRemainsMs <= 0 {
+		t.Error("remains_ms should be positive for future reset times")
+	}
+}
+
+// percent==0: upstream resetsAt is a now+window placeholder and must be
+// dropped, not shown as a countdown.
+func TestOpenCodeGoParser_ZeroPercentDropsReset(t *testing.T) {
+	body := []byte(`{
+		"usage": {
+			"rolling": {"status":"ok","percent":0,"resetsAt":"2099-08-31T10:00:00Z"},
+			"weekly":  {"status":"rate-limited","percent":100,"resetsAt":"2099-09-06T00:00:00Z"}
+		}
+	}`)
+	snap, err := Lookup(FormatOpenCodeGo).Parse(body)
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	m := snap.Models[0]
+	if m.IntervalUsedPct != 0 {
+		t.Errorf("interval_used_percent=%d want 0", m.IntervalUsedPct)
+	}
+	if m.IntervalEndTime != nil || m.IntervalRemainsMs != 0 {
+		t.Errorf("zero-percent window must drop resetsAt, got end=%v remains=%d", m.IntervalEndTime, m.IntervalRemainsMs)
+	}
+	// rate-limited arrives as percent=100 verbatim — no special-casing.
+	if m.WeeklyUsedPct != 100 {
+		t.Errorf("weekly_used_percent=%d want 100", m.WeeklyUsedPct)
+	}
+	// monthly window absent → pointer stays nil
+	if m.MonthlyUsedPct != nil {
+		t.Errorf("monthly_used_percent=%v want nil for absent window", *m.MonthlyUsedPct)
+	}
+}
+
+// Old flat shape (rollingUsage/usagePercent/resetInSec) is long obsolete;
+// an unrecognized payload with no known windows must fail loudly.
+func TestOpenCodeGoParser_UnexpectedShape(t *testing.T) {
+	for _, body := range []string{`{}`, `{"usage":{}}`, `{"rollingUsage":1,"usagePercent":2}`} {
+		if _, err := Lookup(FormatOpenCodeGo).Parse([]byte(body)); err == nil {
+			t.Errorf("expected error for shape %s", body)
+		}
+	}
+}
+
+func TestOpenCodeGoParser_InvalidJSON(t *testing.T) {
+	_, err := Lookup(FormatOpenCodeGo).Parse([]byte("not json"))
+	if err == nil {
+		t.Fatal("expected error for invalid json")
+	}
+}
+
 func TestRegistry_UnknownFormat(t *testing.T) {
 	if Lookup("nope") != nil {
 		t.Error("expected nil for unknown format")
