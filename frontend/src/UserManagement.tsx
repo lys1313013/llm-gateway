@@ -53,8 +53,11 @@ const UserManagement = () => {
   }
 
   useEffect(() => {
-    fetchUsers()
-    fetchTeams()
+    // queueMicrotask 延迟到 effect 同步阶段之后执行，避免在 effect 体内同步 setState
+    queueMicrotask(() => {
+      fetchUsers()
+      fetchTeams()
+    })
   }, [])
 
   const handleDelete = async (user: User) => {

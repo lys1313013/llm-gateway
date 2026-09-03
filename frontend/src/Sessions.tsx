@@ -86,7 +86,8 @@ const Sessions = () => {
   }, [])
 
   useEffect(() => {
-    void fetchSessions(1, appliedQuery)
+    // queueMicrotask 延迟到 effect 同步阶段之后执行，避免在 effect 体内同步 setState
+    queueMicrotask(() => void fetchSessions(1, appliedQuery))
   }, [fetchSessions, appliedQuery])
 
   const handleRefresh = () => {

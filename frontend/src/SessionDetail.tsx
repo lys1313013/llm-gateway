@@ -252,9 +252,9 @@ const buildCompareMetaItems = (left: LogDetail, right: LogDetail): CompareMetaIt
 }
 
 const CompareMetaCard = ({ left, right }: CompareMetaCardProps) => {
-  if (!left || !right) return null
   const { isDark } = useTheme()
   const { token } = theme.useToken()
+  if (!left || !right) return null
   const items = buildCompareMetaItems(left, right)
   return (
     <Row gutter={[12, 0]} wrap>
@@ -345,8 +345,11 @@ const SessionDetail = ({ sessionId }: Props) => {
   }, [sessionId])
 
   useEffect(() => {
-    setCurrentPage(1)
-    void fetchDetail(1)
+    // queueMicrotask 延迟到 effect 同步阶段之后执行，避免在 effect 体内同步 setState
+    queueMicrotask(() => {
+      setCurrentPage(1)
+      void fetchDetail(1)
+    })
   }, [fetchDetail])
 
   const handleRefresh = () => {

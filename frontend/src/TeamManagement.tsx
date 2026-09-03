@@ -29,7 +29,8 @@ const TeamManagement = () => {
     finally { setLoading(false) }
   }
 
-  useEffect(() => { void fetchTeams() }, [])
+  // queueMicrotask 延迟到 effect 同步阶段之后执行，避免在 effect 体内同步 setState
+  useEffect(() => { queueMicrotask(() => void fetchTeams()) }, [])
 
   const handleAdd = () => {
     setEditingRecord(null)

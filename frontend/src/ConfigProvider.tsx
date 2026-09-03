@@ -357,7 +357,8 @@ const QuotaDetailDrawer = ({ providerId, providerName, onClose, onRefresh }: Det
   }, [providerId])
 
   useEffect(() => {
-    void load()
+    // queueMicrotask 延迟到 effect 同步阶段之后执行，避免在 effect 体内同步 setState
+    queueMicrotask(() => void load())
   }, [load])
 
   if (providerId == null) return null
@@ -574,11 +575,13 @@ const ConfigProvider = () => {
   }, [])
 
   useEffect(() => {
-    void fetchData()
+    // queueMicrotask 延迟到 effect 同步阶段之后执行，避免在 effect 体内同步 setState
+    queueMicrotask(() => void fetchData())
   }, [])
 
   useEffect(() => {
-    void fetchQuota()
+    // 同上：首次拉取延后一个微任务，轮询回调本身异步不受影响
+    queueMicrotask(() => void fetchQuota())
     const t = setInterval(() => void fetchQuota(), QUOTA_POLL_INTERVAL_MS)
     return () => clearInterval(t)
   }, [fetchQuota])
@@ -756,10 +759,13 @@ const ConfigProvider = () => {
   }
 
   useEffect(() => {
-    if (!modalVisible) {
-      setTestResults(null)
-      setTestModalOpen(false)
-    }
+    // queueMicrotask 延迟到 effect 同步阶段之后执行，避免在 effect 体内同步 setState
+    queueMicrotask(() => {
+      if (!modalVisible) {
+        setTestResults(null)
+        setTestModalOpen(false)
+      }
+    })
   }, [modalVisible])
 
   const columns: TableColumnsType<ProviderRecord> = [

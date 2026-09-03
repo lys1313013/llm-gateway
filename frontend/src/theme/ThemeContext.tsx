@@ -89,6 +89,8 @@ export const ThemeProvider = ({ children }: { children: ReactNode }) => {
   )
 }
 
+// Provider 组件与 hook 同文件导出是 Theme 模块的既有约定，拆分会影响所有引用方
+// eslint-disable-next-line react-refresh/only-export-components
 export const useTheme = (): ThemeContextValue => {
   const ctx = useContext(ThemeContext)
   if (!ctx) throw new Error('useTheme must be used within a ThemeProvider')

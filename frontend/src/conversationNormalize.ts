@@ -20,7 +20,7 @@ export type Message = {
   blocks: ContentBlock[]
 }
 
-export type Dict = { [k: string]: any }
+export type Dict = { [k: string]: unknown }
 
 export function asObject(v: unknown): Dict | null {
   if (v && typeof v === 'object' && !Array.isArray(v)) return v as Dict

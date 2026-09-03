@@ -117,9 +117,12 @@ const LogViewer = () => {
   }
 
   useEffect(() => {
-    void fetchLogs()
-    void fetchTodayStats()
-    void fetchStatusCodes()
+    // queueMicrotask 延迟到 effect 同步阶段之后执行，避免在 effect 体内同步 setState
+    queueMicrotask(() => {
+      void fetchLogs()
+      void fetchTodayStats()
+      void fetchStatusCodes()
+    })
   }, [])
 
   const handlePageChange = (page: number) => {
@@ -437,8 +440,8 @@ const LogViewer = () => {
         <Table
           size="small"
           components={{
-            header: { cell: (props: any) => <th {...props} style={{ ...props.style, fontSize: 12 }} /> },
-            body:   { cell: (props: any) => <td {...props} style={{ ...props.style, fontSize: 12 }} /> },
+            header: { cell: (props: React.ThHTMLAttributes<HTMLTableCellElement>) => <th {...props} style={{ ...props.style, fontSize: 12 }} /> },
+            body:   { cell: (props: React.TdHTMLAttributes<HTMLTableCellElement>) => <td {...props} style={{ ...props.style, fontSize: 12 }} /> },
           }}
           columns={columns}
           dataSource={logs}

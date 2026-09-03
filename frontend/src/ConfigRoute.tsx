@@ -43,7 +43,7 @@ const ConfigRoute = () => {
       ])
       if (jsonRoutes.success) setData(jsonRoutes.data ?? [])
       if (jsonProviders.success) setProviders(jsonProviders.data ?? [])
-    } catch (e) {
+    } catch {
       message.error('获取路由或产商列表失败')
     } finally {
       setLoading(false)
@@ -51,7 +51,8 @@ const ConfigRoute = () => {
   }
 
   useEffect(() => {
-    void fetchData()
+    // queueMicrotask 延迟到 effect 同步阶段之后执行，避免在 effect 体内同步 setState
+    queueMicrotask(() => void fetchData())
   }, [])
 
   const handleAdd = () => {
@@ -93,7 +94,7 @@ const ConfigRoute = () => {
       } else {
         message.error('删除失败: ' + json.message)
       }
-    } catch (e) {
+    } catch {
       message.error('删除失败')
     }
   }
@@ -123,7 +124,7 @@ const ConfigRoute = () => {
       } else {
         message.error('保存失败: ' + json.message)
       }
-    } catch (e) {
+    } catch {
       console.error(e)
     }
   }

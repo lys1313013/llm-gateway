@@ -161,7 +161,7 @@ const ConfigExposedModel = () => {
       const res = await apiFetch('/api/exposed_model', signal ? { signal } : undefined)
       const json = await res.json()
       if (json.success) setData(json.data || [])
-    } catch (e) {
+    } catch {
       if (e instanceof Error && e.name !== 'AbortError') {
         message.error('获取模型列表失败')
       }
@@ -172,7 +172,8 @@ const ConfigExposedModel = () => {
 
   useEffect(() => {
     const controller = new AbortController()
-    void fetchData(controller.signal)
+    // queueMicrotask 延迟到 effect 同步阶段之后执行，避免在 effect 体内同步 setState
+    queueMicrotask(() => void fetchData(controller.signal))
     if (isRoot) {
       apiFetch('/api/team').then(r => r.json()).then(d => {
         if (d.success) setTeams(d.data || [])
@@ -205,7 +206,7 @@ const ConfigExposedModel = () => {
       } else {
         message.error('删除失败: ' + json.message)
       }
-    } catch (e) {
+    } catch {
       message.error('删除失败')
     }
   }
@@ -223,7 +224,7 @@ const ConfigExposedModel = () => {
       } else {
         message.error('操作失败: ' + json.message)
       }
-    } catch (e) {
+    } catch {
       message.error('操作失败')
     }
   }
@@ -248,7 +249,7 @@ const ConfigExposedModel = () => {
       } else {
         message.error('保存失败: ' + json.message)
       }
-    } catch (e) {
+    } catch {
       console.error(e)
     }
   }
@@ -267,7 +268,7 @@ const ConfigExposedModel = () => {
       try {
         await reportTestResult(record.id, protocol, !result.error && result.status === 200)
         void fetchData()
-      } catch (e) {
+      } catch {
         console.error('[test_time update failed]', e)
       }
     } finally {

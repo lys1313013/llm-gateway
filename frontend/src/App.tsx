@@ -47,8 +47,7 @@ const ALL_KEYS = [
 ] as const
 type PageKey = (typeof ALL_KEYS)[number]
 
-const AUTH_PAGES = ['login', 'register'] as const
-type AuthPage = (typeof AUTH_PAGES)[number]
+type AuthPage = 'login' | 'register'
 
 type HashRoute = { page: PageKey | AuthPage | null; id?: string }
 

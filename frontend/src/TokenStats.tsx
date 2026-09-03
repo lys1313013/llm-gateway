@@ -85,13 +85,16 @@ const TokenStats = () => {
   }
 
   useEffect(() => {
-    const startStr = dateRange[0] ? dateRange[0].format('YYYY-MM-DD') : undefined
-    const endStr = dateRange[1] ? dateRange[1].format('YYYY-MM-DD') : undefined
-    void fetchStats(startStr, endStr)
+    // queueMicrotask 延迟到 effect 同步阶段之后执行，避免在 effect 体内同步 setState
+    queueMicrotask(() => {
+      const startStr = dateRange[0] ? dateRange[0].format('YYYY-MM-DD') : undefined
+      const endStr = dateRange[1] ? dateRange[1].format('YYYY-MM-DD') : undefined
+      void fetchStats(startStr, endStr)
+    })
   }, [dateRange])
 
-  const handleDateRangeChange = (dates: any) => {
-    setDateRange(dates as [Dayjs | null, Dayjs | null])
+  const handleDateRangeChange = (dates: [Dayjs | null, Dayjs | null] | null) => {
+    setDateRange(dates ?? [null, null])
   }
 
   // Calculate totals for cards
@@ -154,7 +157,7 @@ const TokenStats = () => {
       title: 'Tokens'
     },
     label: {
-      text: (d: any) => {
+      text: (d: { hour: string; type: string }) => {
         if (String(d.hour) === String(maxHourLabel) && d.type === '输出 Token') {
           return maxHourlyTotal.toLocaleString()
         }
@@ -241,8 +244,8 @@ const TokenStats = () => {
     innerRadius: 0.35,
     height: 450,
     label: {
-      text: (d: any) => {
-        const total = modelData.reduce((s: number, m: any) => s + m.total_tokens, 0)
+      text: (d: ModelStat) => {
+        const total = modelData.reduce((s: number, m: ModelStat) => s + m.total_tokens, 0)
         const pct = (d.total_tokens / total) * 100
         if (pct < 5) return ''
         return `${d.model}\n${pct.toFixed(1)}%`
@@ -254,7 +257,7 @@ const TokenStats = () => {
     },
     labelTransform: [{ type: 'overlapHide' }],
     tooltip: {
-      title: (d: any) => d.model,
+      title: (d: ModelStat) => d.model,
       items: [
         { field: 'total_tokens', name: 'Total Tokens', valueFormatter: (v: number) => v.toLocaleString() },
       ],
