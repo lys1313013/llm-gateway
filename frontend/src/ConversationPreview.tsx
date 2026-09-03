@@ -79,15 +79,29 @@ function extractImageSrc(p: Dict): { src?: string; mediaType?: string } {
   return { mediaType: p.media_type ? String(p.media_type) : undefined }
 }
 
+// OpenAI 多模态消息的 content 也是数组，不能仅凭"数组 content"判定为 Anthropic，
+// 要看 part 的具体 type：image_url/input_audio/file 是 OpenAI 独有；
+// image/tool_use/tool_result/thinking 是 Anthropic 风格。
+const OPENAI_PART_TYPES = new Set(['image_url', 'input_audio', 'file', 'refusal'])
+
 function detectAnthropicRequest(req: Record<string, unknown>): boolean {
   if (typeof req.system === 'string' || Array.isArray(req.system)) return true
-  if (Array.isArray(req.messages)) {
-    return (req.messages as unknown[]).some((m) => {
-      const obj = asObject(m)
-      return Array.isArray(obj?.content)
-    })
+  if (!Array.isArray(req.messages)) return false
+  let sawArrayContent = false
+  for (const m of req.messages as unknown[]) {
+    const obj = asObject(m)
+    if (!obj) continue
+    if (Array.isArray(obj.tool_calls)) return false // OpenAI 字段
+    if (!Array.isArray(obj.content)) continue
+    sawArrayContent = true
+    for (const part of obj.content as unknown[]) {
+      const p = asObject(part)
+      if (!p || typeof p.type !== 'string') continue
+      if (OPENAI_PART_TYPES.has(p.type)) return false
+      if (p.type !== 'text') return true // Anthropic 风格 part
+    }
   }
-  return false
+  return sawArrayContent
 }
 
 function normalizeOpenAIMessages(messages: unknown[]): Message[] {
@@ -150,6 +164,7 @@ function normalizeAnthropicMessages(messages: unknown[]): Message[] {
             blocks.push({ kind: 'text', text: String(p.text ?? '') })
             break
           case 'image':
+          case 'image_url': // 兜底：客户端按 OpenAI 格式发的图片
             blocks.push({ kind: 'image', ...extractImageSrc(p) })
             break
           case 'tool_use':
@@ -291,7 +306,10 @@ function buildConversation(
   const req = asObject(requestData)
 
   if (req) {
-    const isAnthropic = protocol === 'anthropic' || detectAnthropicRequest(req)
+    // protocol 字段明确时以它为准，否则靠内容特征探测
+    const isAnthropic =
+      protocol === 'anthropic' ||
+      (protocol !== 'openai' && detectAnthropicRequest(req))
     if (isAnthropic) {
       if (typeof req.system === 'string' && req.system.trim()) {
         messages.push({ role: 'system', blocks: [{ kind: 'text', text: req.system }] })
