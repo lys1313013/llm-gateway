@@ -1,5 +1,5 @@
 import { useMemo } from 'react'
-import { Empty, Space, Tag, Tooltip, Typography, theme } from 'antd'
+import { Empty, Image, Space, Tag, Tooltip, Typography, theme } from 'antd'
 import {
   RobotOutlined, UserOutlined, ToolOutlined,
   PictureOutlined, CodeOutlined, BulbOutlined,
@@ -15,7 +15,7 @@ type ToolCall = { name: string; args: string; id?: string }
 
 type ContentBlock =
   | { kind: 'text'; text: string }
-  | { kind: 'image'; mediaType?: string }
+  | { kind: 'image'; mediaType?: string; src?: string }
   | { kind: 'tool_use'; name: string; input: unknown; id?: string }
   | { kind: 'tool_result'; content: string; isError?: boolean; toolUseId?: string }
   | { kind: 'tool_calls'; calls: ToolCall[] }
@@ -55,6 +55,30 @@ function safeStringify(v: unknown, max = 4000): string {
   }
 }
 
+// 从 OpenAI image_url / Anthropic image source 中提取可直接 <img> 展示的地址：
+// 优先 base64 data URI，其次是 http(s) URL。拿不到可展示的地址时返回 undefined。
+function extractImageSrc(p: Dict): { src?: string; mediaType?: string } {
+  // OpenAI: { type: 'image_url', image_url: { url } | 'url-string' }
+  const imageUrl = p.image_url
+  if (typeof imageUrl === 'string') return { src: imageUrl }
+  const urlObj = asObject(imageUrl)
+  if (urlObj && typeof urlObj.url === 'string' && urlObj.url) {
+    return { src: urlObj.url }
+  }
+  // Anthropic: { type: 'image', source: { type: 'base64', media_type, data } | { type: 'url', url } }
+  const source = asObject(p.source)
+  if (source) {
+    if (source.type === 'base64' && typeof source.data === 'string' && source.data) {
+      const mediaType = String(source.media_type ?? 'image/png')
+      return { src: `data:${mediaType};base64,${source.data}`, mediaType }
+    }
+    if (typeof source.url === 'string' && source.url) {
+      return { src: source.url, mediaType: source.media_type ? String(source.media_type) : undefined }
+    }
+  }
+  return { mediaType: p.media_type ? String(p.media_type) : undefined }
+}
+
 function detectAnthropicRequest(req: Record<string, unknown>): boolean {
   if (typeof req.system === 'string' || Array.isArray(req.system)) return true
   if (Array.isArray(req.messages)) {
@@ -85,7 +109,7 @@ function normalizeOpenAIMessages(messages: unknown[]): Message[] {
         if (p.type === 'text' || typeof p.text === 'string') {
           blocks.push({ kind: 'text', text: String(p.text ?? '') })
         } else if (p.type === 'image_url' || p.type === 'image') {
-          blocks.push({ kind: 'image' })
+          blocks.push({ kind: 'image', ...extractImageSrc(p) })
         } else {
           blocks.push({ kind: 'unknown', raw: p })
         }
@@ -126,7 +150,7 @@ function normalizeAnthropicMessages(messages: unknown[]): Message[] {
             blocks.push({ kind: 'text', text: String(p.text ?? '') })
             break
           case 'image':
-            blocks.push({ kind: 'image', mediaType: String(p.source?.media_type ?? p.media_type ?? '') })
+            blocks.push({ kind: 'image', ...extractImageSrc(p) })
             break
           case 'tool_use':
             blocks.push({
@@ -138,13 +162,23 @@ function normalizeAnthropicMessages(messages: unknown[]): Message[] {
             break
           case 'tool_result': {
             const c = p.content
-            const content = typeof c === 'string' ? c : safeStringify(c)
-            blocks.push({
-              kind: 'tool_result',
-              content,
-              isError: Boolean(p.is_error),
-              toolUseId: p.tool_use_id as string | undefined,
-            })
+            const toolUseId = p.tool_use_id as string | undefined
+            const isError = Boolean(p.is_error)
+            if (Array.isArray(c)) {
+              // 工具结果可以是数组（文本 + 图片，如截图工具），图片单独渲染成 image 块
+              const texts: string[] = []
+              for (const part of c) {
+                const cp = asObject(part)
+                if (!cp) continue
+                if (cp.type === 'text') texts.push(String(cp.text ?? ''))
+                else if (cp.type === 'image') blocks.push({ kind: 'image', ...extractImageSrc(cp) })
+                else texts.push(safeStringify(cp))
+              }
+              blocks.push({ kind: 'tool_result', content: texts.join('\n'), isError, toolUseId })
+            } else {
+              const content = typeof c === 'string' ? c : safeStringify(c)
+              blocks.push({ kind: 'tool_result', content, isError, toolUseId })
+            }
             break
           }
           case 'thinking':
@@ -178,7 +212,7 @@ function normalizeOpenAIResponse(resp: Record<string, unknown>): Message[] {
           if (!p) continue
           if (p.type === 'text') blocks.push({ kind: 'text', text: String(p.text ?? '') })
           else if (p.type === 'refusal') blocks.push({ kind: 'text', text: String(p.refusal ?? '') })
-          else if (p.type === 'image_url' || p.type === 'image') blocks.push({ kind: 'image' })
+          else if (p.type === 'image_url' || p.type === 'image') blocks.push({ kind: 'image', ...extractImageSrc(p) })
           else blocks.push({ kind: 'unknown', raw: p })
         }
       }
@@ -390,8 +424,20 @@ function TextBlock({ text }: { text: string }) {
   )
 }
 
-function ImageBlock({ mediaType }: { mediaType?: string }) {
+function ImageBlock({ mediaType, src }: { mediaType?: string; src?: string }) {
   const { isDark } = useTheme()
+  if (src) {
+    return (
+      <div>
+        <Image
+          src={src}
+          alt={mediaType ? `图片 (${mediaType})` : '图片'}
+          style={{ maxWidth: 320, maxHeight: 320, borderRadius: 6, objectFit: 'contain' }}
+          preview={{ mask: <PictureOutlined /> }}
+        />
+      </div>
+    )
+  }
   return (
     <div
       style={{
@@ -620,7 +666,7 @@ function UnknownBlock({ raw }: { raw: unknown }) {
 function Block({ block }: { block: ContentBlock }) {
   switch (block.kind) {
     case 'text':        return <TextBlock text={block.text} />
-    case 'image':       return <ImageBlock mediaType={block.mediaType} />
+    case 'image':       return <ImageBlock mediaType={block.mediaType} src={block.src} />
     case 'thinking':    return block.text ? <ThinkingBlock text={block.text} /> : null
     case 'tool_use':    return <ToolUseBlock name={block.name} input={block.input} id={block.id} />
     case 'tool_calls':  return <ToolCallsBlock calls={block.calls} />
