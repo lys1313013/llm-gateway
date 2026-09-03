@@ -36,3 +36,14 @@ cd frontend && pnpm install && pnpm dev                 # 前端 :18888
 ### 数据库
 
 `db.Init()` 通过 `CREATE TABLE IF NOT EXISTS` + `ALTER TABLE ADD COLUMN IF NOT EXISTS` 自动迁移，`db.Pool` 是全局 `*pgxpool.Pool`。
+
+### 前端对话预览
+
+日志详情的「对话预览」由 `ConversationPreview.tsx` 渲染，协议归一化逻辑全部在纯函数模块 `conversationNormalize.ts`（无 React 依赖）：
+
+- `buildConversation(request, response, protocol)` 把 OpenAI / Anthropic 两种协议的请求+响应统一还原成 `Message[]`
+- 协议判定：`protocol` 字段（`openai`/`anthropic`）优先；缺失时 `detectAnthropicRequest()` 按内容特征探测——顶层 `system` 字段或 `image`/`tool_use`/`tool_result`/`thinking` 类型的 part 判 Anthropic，`image_url`/`input_audio`/`file` part 或 `tool_calls` 字段判 OpenAI。**注意**：OpenAI 多模态消息的 content 也是数组，不能仅凭数组 content 判定（曾因此把 OpenAI 图片请求误判成 Anthropic，显示为「未知类型内容块」）
+- 图片块由 `extractImageSrc()` 提取可渲染地址（OpenAI `image_url.url`、Anthropic base64 source 拼 `data:` URI、URL source 原样透出），有 `src` 时前端直接 `<Image>` 渲染，否则显示占位标签
+- Anthropic `tool_result` 内容为数组时，其中的图片 part 拆分为独立 image 块
+
+测试：`cd frontend && pnpm test`（Vitest），用例在 `conversationNormalize.test.ts`。改归一化逻辑前请先跑测试。
