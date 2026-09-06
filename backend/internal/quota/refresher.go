@@ -32,7 +32,10 @@ type Fetcher struct {
 func NewFetcher() *Fetcher {
 	return &Fetcher{
 		Cache: NewCache(),
-		HTTP:  &http.Client{Timeout: 8 * time.Second},
+		// Transport 为 nil 时用 DefaultTransport，会读取 HTTP_PROXY/
+		// HTTPS_PROXY 环境变量——chatgpt.com 这类被墙的上游需要给进程
+		// 配代理 env。
+		HTTP: &http.Client{Timeout: 8 * time.Second},
 	}
 }
 
