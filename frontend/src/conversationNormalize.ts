@@ -200,7 +200,7 @@ export function normalizeOpenAIResponse(resp: Record<string, unknown>): Message[
   const choices = resp.choices
   if (Array.isArray(choices)) {
     for (const choice of choices) {
-      const m = asObject(choice)?.message
+      const m = asObject(asObject(choice)?.message)
       if (!m) continue
       const blocks: ContentBlock[] = []
       if (typeof m.content === 'string') {

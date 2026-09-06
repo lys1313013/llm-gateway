@@ -124,7 +124,7 @@ const ConfigRoute = () => {
       } else {
         message.error('保存失败: ' + json.message)
       }
-    } catch {
+    } catch (e) {
       console.error(e)
     }
   }
