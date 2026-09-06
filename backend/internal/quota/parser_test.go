@@ -1,6 +1,7 @@
 package quota
 
 import (
+	"encoding/base64"
 	"strings"
 	"testing"
 )
@@ -352,6 +353,166 @@ func TestOpenCodeGoParser_InvalidJSON(t *testing.T) {
 	_, err := Lookup(FormatOpenCodeGo).Parse([]byte("not json"))
 	if err == nil {
 		t.Fatal("expected error for invalid json")
+	}
+}
+
+func TestChatGPTParser_Success(t *testing.T) {
+	body := []byte(`{
+		"plan_type": "plus",
+		"rate_limit": {
+			"allowed": true,
+			"limit_reached": false,
+			"primary_window": {"used_percent": 45, "limit_window_seconds": 18000, "reset_after_seconds": 1500, "reset_at": 4102444800},
+			"secondary_window": {"used_percent": 56, "limit_window_seconds": 604800, "reset_after_seconds": 300000, "reset_at": 4102444800}
+		}
+	}`)
+	snap, err := Lookup(FormatChatGPT).Parse(body)
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if snap.DisplayType != DisplayTypeModelRemains {
+		t.Errorf("display_type=%q want %q", snap.DisplayType, DisplayTypeModelRemains)
+	}
+	if len(snap.Models) != 1 {
+		t.Fatalf("models len=%d want 1", len(snap.Models))
+	}
+	m := snap.Models[0]
+	if m.ModelName != "ChatGPT plus" {
+		t.Errorf("model_name=%q", m.ModelName)
+	}
+	if m.IntervalUsedPct != 45 {
+		t.Errorf("interval_used_percent=%d want 45", m.IntervalUsedPct)
+	}
+	if m.WeeklyUsedPct != 56 {
+		t.Errorf("weekly_used_percent=%d want 56", m.WeeklyUsedPct)
+	}
+	if m.IntervalRemainsMs <= 0 || m.WeeklyRemainsMs <= 0 {
+		t.Error("remains_ms should be positive for future reset_at")
+	}
+	if m.IntervalEndTime == nil || m.WeeklyEndTime == nil {
+		t.Error("end times should be parsed from reset_at")
+	}
+	if m.Status != 1 || m.StatusText != "使用中" {
+		t.Errorf("status=%d text=%q", m.Status, m.StatusText)
+	}
+	// window length must pass through so the UI can label non-5h plans (Pro).
+	if m.IntervalWindowSeconds == nil || *m.IntervalWindowSeconds != 18000 {
+		t.Errorf("interval_window_seconds=%v want 18000", m.IntervalWindowSeconds)
+	}
+	if m.WeeklyWindowSeconds == nil || *m.WeeklyWindowSeconds != 604800 {
+		t.Errorf("weekly_window_seconds=%v want 604800", m.WeeklyWindowSeconds)
+	}
+	if m.WeeklyPresent == nil || !*m.WeeklyPresent {
+		t.Errorf("weekly_present=%v want true", m.WeeklyPresent)
+	}
+}
+
+// secondary_window is null on some plans — weekly fields must stay zero.
+func TestChatGPTParser_NoSecondaryWindow(t *testing.T) {
+	body := []byte(`{
+		"plan_type": "pro",
+		"rate_limit": {
+			"allowed": true,
+			"limit_reached": false,
+			"primary_window": {"used_percent": 10, "limit_window_seconds": 18000, "reset_after_seconds": 100, "reset_at": 4102444800},
+			"secondary_window": null
+		}
+	}`)
+	snap, err := Lookup(FormatChatGPT).Parse(body)
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	m := snap.Models[0]
+	if m.IntervalUsedPct != 10 {
+		t.Errorf("interval_used_percent=%d want 10", m.IntervalUsedPct)
+	}
+	if m.WeeklyUsedPct != 0 || m.WeeklyEndTime != nil {
+		t.Errorf("weekly fields should stay zero, got pct=%d end=%v", m.WeeklyUsedPct, m.WeeklyEndTime)
+	}
+	if m.WeeklyPresent == nil || *m.WeeklyPresent {
+		t.Errorf("weekly_present=%v want explicit false for null secondary_window", m.WeeklyPresent)
+	}
+}
+
+func TestChatGPTParser_LimitReached(t *testing.T) {
+	body := []byte(`{
+		"plan_type": "plus",
+		"rate_limit": {
+			"allowed": false,
+			"limit_reached": true,
+			"primary_window": {"used_percent": 100, "limit_window_seconds": 18000, "reset_after_seconds": 900, "reset_at": 4102444800},
+			"secondary_window": {"used_percent": 80, "limit_window_seconds": 604800, "reset_after_seconds": 90000, "reset_at": 4102444800}
+		}
+	}`)
+	snap, err := Lookup(FormatChatGPT).Parse(body)
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	m := snap.Models[0]
+	if m.Status != 2 || m.StatusText != "已限流" {
+		t.Errorf("status=%d text=%q, want 2/已限流", m.Status, m.StatusText)
+	}
+	if m.IntervalUsedPct != 100 {
+		t.Errorf("interval_used_percent=%d want 100", m.IntervalUsedPct)
+	}
+}
+
+// used_percent=0: the window is idle and reset_at is a placeholder — drop it
+// instead of showing a countdown (same rule as opencode_go).
+func TestChatGPTParser_ZeroPercentDropsReset(t *testing.T) {
+	body := []byte(`{
+		"plan_type": "plus",
+		"rate_limit": {
+			"allowed": true,
+			"limit_reached": false,
+			"primary_window": {"used_percent": 0, "limit_window_seconds": 18000, "reset_after_seconds": 18000, "reset_at": 4102444800},
+			"secondary_window": null
+		}
+	}`)
+	snap, err := Lookup(FormatChatGPT).Parse(body)
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	m := snap.Models[0]
+	if m.IntervalUsedPct != 0 {
+		t.Errorf("interval_used_percent=%d want 0", m.IntervalUsedPct)
+	}
+	if m.IntervalEndTime != nil || m.IntervalRemainsMs != 0 {
+		t.Errorf("zero-percent window must drop reset_at, got end=%v remains=%d", m.IntervalEndTime, m.IntervalRemainsMs)
+	}
+}
+
+// An unrecognized payload (no plan_type and no primary window) must fail
+// loudly instead of rendering an empty card.
+func TestChatGPTParser_UnexpectedShape(t *testing.T) {
+	for _, body := range []string{`{}`, `{"rate_limit":{}}`, `{"usage":{"percent":1}}`} {
+		if _, err := Lookup(FormatChatGPT).Parse([]byte(body)); err == nil {
+			t.Errorf("expected error for shape %s", body)
+		}
+	}
+}
+
+func TestChatGPTParser_InvalidJSON(t *testing.T) {
+	if _, err := Lookup(FormatChatGPT).Parse([]byte("not json")); err == nil {
+		t.Fatal("expected error for invalid json")
+	}
+}
+
+func TestChatGPTTokenExp(t *testing.T) {
+	// JWT with payload {"exp":4102444800} — header/signature content irrelevant.
+	payload := base64.RawURLEncoding.EncodeToString([]byte(`{"exp":4102444800}`))
+	token := "xxx." + payload + ".yyy"
+	exp, ok := chatGPTTokenExp(token)
+	if !ok {
+		t.Fatal("expected ok for well-formed JWT")
+	}
+	if exp.Unix() != 4102444800 {
+		t.Errorf("exp=%d want 4102444800", exp.Unix())
+	}
+	for _, bad := range []string{"", "not-a-jwt", "a.b", "a.!!!.c"} {
+		if _, ok := chatGPTTokenExp(bad); ok {
+			t.Errorf("expected not-ok for %q", bad)
+		}
 	}
 }
 

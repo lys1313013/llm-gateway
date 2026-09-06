@@ -16,6 +16,7 @@ type Preset struct {
 	Description      string `json:"description,omitempty"`
 	OpenAIBaseURL    string `json:"openai_base_url,omitempty"`
 	AnthropicBaseURL string `json:"anthropic_base_url,omitempty"`
+	ResponsesBaseURL string `json:"responses_base_url,omitempty"`
 	QuotaURL         string `json:"quota_url,omitempty"`
 	QuotaFormat      string `json:"quota_format,omitempty"`
 	Remark           string `json:"remark,omitempty"`

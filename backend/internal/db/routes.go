@@ -48,10 +48,12 @@ func GetRoute(ctx context.Context, id int) (*models.ModelRoute, error) {
 	return r, nil
 }
 
+// GetActiveRoutes returns routes eligible for proxying: the route itself is
+// active AND its provider (if still linked) is not disabled.
 func GetActiveRoutes(ctx context.Context) ([]models.ModelRoute, error) {
 	rows, err := mustHavePool().Query(ctx,
 		`SELECT `+routeSelectCols+routeFromJoin+
-			` WHERE r.is_active = TRUE ORDER BY r.priority DESC, r.id ASC`)
+			` WHERE r.is_active = TRUE AND (p.is_active IS NULL OR p.is_active = TRUE) ORDER BY r.priority DESC, r.id ASC`)
 	if err != nil {
 		return nil, err
 	}

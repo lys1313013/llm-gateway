@@ -78,5 +78,14 @@
     "quota_url": "https://opencode.ai/zen/go/v1/usage",
     "quota_format": "opencode_go",
     "remark": "支持订阅用量查询（5h/周/月三窗口，百分比）"
+  },
+  {
+    "id": "chatgpt-codex",
+    "name": "ChatGPT 订阅 (Codex)",
+    "description": "ChatGPT Plus/Pro 订阅，走 Codex OAuth",
+    "responses_base_url": "https://chatgpt.com/backend-api/codex",
+    "quota_url": "https://chatgpt.com/backend-api/wham/usage",
+    "quota_format": "chatgpt",
+    "remark": "配额查询需填 ~/.codex/auth.json 里的 access_token / refresh_token"
   }
 ]

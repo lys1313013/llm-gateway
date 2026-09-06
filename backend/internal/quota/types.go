@@ -14,6 +14,7 @@ const (
 	FormatDeepSeek   = "deepseek"
 	FormatKimi       = "kimi"
 	FormatOpenCodeGo = "opencode_go"
+	FormatChatGPT    = "chatgpt"
 )
 
 // Snapshot is the unified envelope returned by the cache to handlers.
@@ -40,13 +41,24 @@ type ModelQuota struct {
 	IntervalRemainsMs  int64      `json:"interval_remains_ms,omitempty"`
 	IntervalStartTime  *time.Time `json:"interval_start_time,omitempty"`
 	IntervalEndTime    *time.Time `json:"interval_end_time,omitempty"`
+	// IntervalWindowSeconds is the upstream's declared window length (e.g.
+	// ChatGPT primary_window.limit_window_seconds) so the UI can label the
+	// cycle truthfully instead of hardcoding "5h" — Pro plans use longer
+	// windows.
+	IntervalWindowSeconds *int64 `json:"interval_window_seconds,omitempty"`
 
-	WeeklyUsageCount *int64     `json:"weekly_usage_count,omitempty"`
-	WeeklyTotalCount *int64     `json:"weekly_total_count,omitempty"`
-	WeeklyUsedPct    int        `json:"weekly_used_percent"`
-	WeeklyRemainsMs  int64      `json:"weekly_remains_ms,omitempty"`
-	WeeklyStartTime  *time.Time `json:"weekly_start_time,omitempty"`
-	WeeklyEndTime    *time.Time `json:"weekly_end_time,omitempty"`
+	WeeklyUsageCount    *int64     `json:"weekly_usage_count,omitempty"`
+	WeeklyTotalCount    *int64     `json:"weekly_total_count,omitempty"`
+	WeeklyUsedPct       int        `json:"weekly_used_percent"`
+	WeeklyRemainsMs     int64      `json:"weekly_remains_ms,omitempty"`
+	WeeklyStartTime     *time.Time `json:"weekly_start_time,omitempty"`
+	WeeklyEndTime       *time.Time `json:"weekly_end_time,omitempty"`
+	WeeklyWindowSeconds *int64     `json:"weekly_window_seconds,omitempty"`
+	// WeeklyPresent marks whether the upstream actually reported a weekly
+	// window. nil = unknown (older parsers — UI assumes present), non-nil
+	// = explicit (chatgpt sets it from secondary_window != null). The
+	// frontend hides the weekly row only when this is explicitly false.
+	WeeklyPresent *bool `json:"weekly_present,omitempty"`
 
 	// Monthly cycle is optional — only OpenCode Go exposes one. UsedPct is a
 	// pointer so a genuine 0% is distinguishable from "window absent".

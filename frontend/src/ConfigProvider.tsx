@@ -17,6 +17,7 @@ import {
   Skeleton,
   Space,
   Statistic,
+  Switch,
   Table,
   Tag,
   Tooltip,
@@ -43,6 +44,10 @@ export type ProviderRecord = {
   remark: string | null
   quota_url: string | null
   quota_format: string | null
+  quota_access_token: string | null
+  quota_refresh_token: string | null
+  quota_account_id: string | null
+  is_active: boolean
   create_time: string
   update_time: string
 }
@@ -57,12 +62,17 @@ type QuotaModel = {
   interval_remains_ms?: number
   interval_start_time?: string
   interval_end_time?: string
+  interval_window_seconds?: number
   weekly_usage_count?: number
   weekly_total_count?: number
   weekly_used_percent: number
   weekly_remains_ms?: number
   weekly_start_time?: string
   weekly_end_time?: string
+  weekly_window_seconds?: number
+  // false = 上游没有周窗口（如 ChatGPT Pro 只有一个窗口），隐藏该行；
+  // undefined = 不确定（旧 format），照常显示
+  weekly_present?: boolean
   monthly_used_percent?: number
   monthly_remains_ms?: number
   monthly_end_time?: string
@@ -88,6 +98,7 @@ type ProviderQuotaEntry = {
   provider_id: number
   provider_name: string
   has_config: boolean
+  is_active: boolean
   present: boolean
   snapshot: QuotaSnapshot
 }
@@ -96,12 +107,9 @@ type ProviderQuotaEntry = {
 // Constants
 // ---------------------------------------------------------------------------
 
-const QUOTA_FORMATS = [
-  { value: 'minimax', label: 'MiniMax (按模型配额)' },
-  { value: 'deepseek', label: 'DeepSeek (账户余额)' },
-  { value: 'kimi', label: 'Kimi (Coding 套餐)' },
-  { value: 'opencode_go', label: 'OpenCode Go (订阅用量)' },
-] as const
+// 配额查询 format 值由预置产商携带，不在表单暴露。chatgpt 格式（ChatGPT
+// 订阅，Codex OAuth）需要用户填 token 三件套，其余格式复用 api_key。
+const QUOTA_FORMAT_CHATGPT = 'chatgpt'
 
 const QUOTA_POLL_INTERVAL_MS = 30_000
 
@@ -111,6 +119,7 @@ type ProviderPreset = {
   description?: string
   openai_base_url?: string
   anthropic_base_url?: string
+  responses_base_url?: string
   quota_url?: string
   quota_format?: string
   remark?: string
@@ -153,6 +162,17 @@ const quotaStatusColor = (pct: number): string => {
   return '#22C55E'
 }
 
+// 周期标签：上游声明了窗口长度（windowSec）就用真实长度（如 ChatGPT Pro
+// 的主窗口不是 5h），否则回退到该槽位的默认叫法。
+const windowLabel = (windowSec: number | undefined, fallback: string): string => {
+  if (!windowSec || windowSec <= 0) return fallback
+  if (windowSec % 604800 === 0) return `${windowSec / 604800}周`
+  if (windowSec % 86400 === 0) return `${windowSec / 86400}天`
+  if (windowSec % 3600 === 0) return `${windowSec / 3600}h`
+  if (windowSec >= 60) return `${Math.round(windowSec / 60)}分`
+  return `${windowSec}秒`
+}
+
 const summarizeSnapshot = (s?: QuotaSnapshot): { text: string; tone: 'success' | 'warning' | 'error' | 'default' } => {
   if (!s) return { text: '—', tone: 'default' }
   if (s.last_error) return { text: '拉取失败', tone: 'error' }
@@ -161,13 +181,16 @@ const summarizeSnapshot = (s?: QuotaSnapshot): { text: string; tone: 'success' |
   }
   if (s.display_type === 'model_remains' && s.models && s.models.length > 0) {
     const agg = aggregateModels(s.models)
-    const worst = Math.max(agg.interval.usedPct, agg.weekly.usedPct, agg.monthly?.usedPct ?? 0)
+    const worst = Math.max(agg.interval.usedPct, agg.weeklyPresent ? agg.weekly.usedPct : 0, agg.monthly?.usedPct ?? 0)
     const iRem = formatDurationCompact(agg.interval.remainsMs)
     const wRem = formatDurationCompact(agg.weekly.remainsMs)
     const mRem = formatDurationCompact(agg.monthly?.remainsMs)
+    const weeklyPart = agg.weeklyPresent
+      ? ` · ${windowLabel(agg.weekly.windowSec, '本周')} ${agg.weekly.usedPct}%${wRem ? ` ${wRem}` : ''}`
+      : ''
     const monthlyPart = agg.monthly ? ` · 本月 ${agg.monthly.usedPct}%${mRem ? ` ${mRem}` : ''}` : ''
     return {
-      text: `5h ${agg.interval.usedPct}%${iRem ? ` ${iRem}` : ''} · 本周 ${agg.weekly.usedPct}%${wRem ? ` ${wRem}` : ''}${monthlyPart}`,
+      text: `${windowLabel(agg.interval.windowSec, '5h')} ${agg.interval.usedPct}%${iRem ? ` ${iRem}` : ''}${weeklyPart}${monthlyPart}`,
       tone: worst >= 90 ? 'error' : worst >= 70 ? 'warning' : 'success',
     }
   }
@@ -184,11 +207,14 @@ type AggregatedCycle = {
   start?: string
   end?: string
   remainsMs?: number
+  windowSec?: number
 }
 
 type AggregatedQuota = {
   interval: AggregatedCycle
   weekly: AggregatedCycle
+  // false 仅当上游明确说没有周窗口（weekly_present === false）
+  weeklyPresent: boolean
   monthly?: AggregatedCycle
 }
 
@@ -202,6 +228,7 @@ const aggregateModels = (models: QuotaModel[]): AggregatedQuota => {
   const withMonthly = models.filter((m) => m.monthly_used_percent !== undefined)
   const monthly = withMonthly.length > 0 ? pickMax(withMonthly, 'monthly_used_percent') : undefined
   return {
+    weeklyPresent: models.some((m) => m.weekly_present !== false),
     interval: {
       usedPct: interval.interval_used_percent,
       usage: interval.interval_usage_count,
@@ -209,6 +236,7 @@ const aggregateModels = (models: QuotaModel[]): AggregatedQuota => {
       start: interval.interval_start_time,
       end: interval.interval_end_time,
       remainsMs: interval.interval_remains_ms,
+      windowSec: interval.interval_window_seconds,
     },
     weekly: {
       usedPct: weekly.weekly_used_percent,
@@ -217,6 +245,7 @@ const aggregateModels = (models: QuotaModel[]): AggregatedQuota => {
       start: weekly.weekly_start_time,
       end: weekly.weekly_end_time,
       remainsMs: weekly.weekly_remains_ms,
+      windowSec: weekly.weekly_window_seconds,
     },
     ...(monthly && {
       monthly: {
@@ -241,7 +270,9 @@ type OverviewProps = {
 
 const QuotaOverviewCard = ({ entries, loading, onRefreshOne, onOpenDetail }: OverviewProps) => {
   const { isDark } = useTheme()
-  const configured = entries.filter((e) => e.has_config)
+  // 停用的产商不参与统计与展示；一个启用的都没有时整张卡不渲染
+  const configured = entries.filter((e) => e.has_config && e.is_active)
+  if (!entries.some((e) => e.is_active)) return null
   const successCount = configured.filter((e) => e.snapshot && !e.snapshot.last_error && e.snapshot.display_type).length
   const errorCount = configured.filter((e) => e.snapshot?.last_error).length
   const pendingCount = configured.length - successCount - errorCount
@@ -255,7 +286,7 @@ const QuotaOverviewCard = ({ entries, loading, onRefreshOne, onOpenDetail }: Ove
     >
       {configured.length === 0 ? (
         <Empty
-          description="暂无产商配置配额（编辑产商，填写 Quota URL + Quota Format 即可启用）"
+          description="暂无产商配置配额（选择带配额查询的预置产商即可启用）"
           image={Empty.PRESENTED_IMAGE_SIMPLE}
         />
       ) : (
@@ -414,7 +445,7 @@ const ModelRemainsView = ({ models }: { models: QuotaModel[] }) => {
   return (
     <Space direction="vertical" style={{ width: '100%' }} size="middle">
       <ProgressBlock
-        label="5 小时用量"
+        label={`${windowLabel(agg.interval.windowSec, '5 小时')}用量`}
         pct={agg.interval.usedPct}
         start={agg.interval.start}
         end={agg.interval.end}
@@ -422,15 +453,17 @@ const ModelRemainsView = ({ models }: { models: QuotaModel[] }) => {
         total={agg.interval.total}
         remainsMs={agg.interval.remainsMs}
       />
-      <ProgressBlock
-        label="本周用量"
-        pct={agg.weekly.usedPct}
-        start={agg.weekly.start}
-        end={agg.weekly.end}
-        usage={agg.weekly.usage}
-        total={agg.weekly.total}
-        remainsMs={agg.weekly.remainsMs}
-      />
+      {agg.weeklyPresent && (
+        <ProgressBlock
+          label={`${windowLabel(agg.weekly.windowSec, '本周')}用量`}
+          pct={agg.weekly.usedPct}
+          start={agg.weekly.start}
+          end={agg.weekly.end}
+          usage={agg.weekly.usage}
+          total={agg.weekly.total}
+          remainsMs={agg.weekly.remainsMs}
+        />
+      )}
       {agg.monthly && (
         <ProgressBlock
           label="本月用量"
@@ -468,10 +501,12 @@ const DualProgressLine = ({ models }: { models: QuotaModel[] }) => {
   const agg = aggregateModels(models)
   return (
     <div>
-      <CycleLine label="5h" pct={agg.interval.usedPct} remainsMs={agg.interval.remainsMs} />
-      <div style={{ marginTop: 6 }}>
-        <CycleLine label="本周" pct={agg.weekly.usedPct} remainsMs={agg.weekly.remainsMs} />
-      </div>
+      <CycleLine label={windowLabel(agg.interval.windowSec, '5h')} pct={agg.interval.usedPct} remainsMs={agg.interval.remainsMs} />
+      {agg.weeklyPresent && (
+        <div style={{ marginTop: 6 }}>
+          <CycleLine label={windowLabel(agg.weekly.windowSec, '本周')} pct={agg.weekly.usedPct} remainsMs={agg.weekly.remainsMs} />
+        </div>
+      )}
       {agg.monthly && (
         <div style={{ marginTop: 6 }}>
           <CycleLine label="本月" pct={agg.monthly.usedPct} remainsMs={agg.monthly.remainsMs} />
@@ -531,6 +566,8 @@ const ConfigProvider = () => {
   const [modalVisible, setModalVisible] = useState(false)
   const [editingRecord, setEditingRecord] = useState<ProviderRecord | null>(null)
   const [form] = Form.useForm()
+  // 驱动 chatgpt token 字段的条件渲染（quota_format 由预置写入隐藏字段）
+  const quotaFormat = Form.useWatch('quota_format', form)
 
   const [presets, setPresets] = useState<ProviderPreset[]>([])
   const [selectedPresetId, setSelectedPresetId] = useState<string | undefined>(undefined)
@@ -609,6 +646,7 @@ const ConfigProvider = () => {
       name: preset.name,
       openai_base_url: preset.openai_base_url || undefined,
       anthropic_base_url: preset.anthropic_base_url || undefined,
+      responses_base_url: preset.responses_base_url || undefined,
       quota_url: preset.quota_url || undefined,
       quota_format: preset.quota_format || undefined,
       remark: preset.remark || undefined,
@@ -636,7 +674,41 @@ const ConfigProvider = () => {
     setEditingRecord(null)
     setSelectedPresetId(undefined)
     form.resetFields()
+    form.setFieldsValue({ is_active: true })
     setModalVisible(true)
+  }
+
+  // 表格里的启用开关：直接整表 PUT（后端全列覆盖，必须把现有值全部带上）
+  const handleToggleActive = async (record: ProviderRecord, checked: boolean) => {
+    try {
+      const res = await apiFetch(`/api/provider/${record.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: record.name,
+          openai_base_url: record.openai_base_url,
+          anthropic_base_url: record.anthropic_base_url,
+          responses_base_url: record.responses_base_url,
+          api_key: record.api_key,
+          remark: record.remark,
+          quota_url: record.quota_url,
+          quota_format: record.quota_format,
+          quota_access_token: record.quota_access_token,
+          quota_refresh_token: record.quota_refresh_token,
+          quota_account_id: record.quota_account_id,
+          is_active: checked,
+        }),
+      })
+      const json = await res.json()
+      if (json.success) {
+        message.success(checked ? '已启用' : '已停用')
+        void fetchData()
+      } else {
+        message.error(json.message || '操作失败')
+      }
+    } catch {
+      message.error('操作失败')
+    }
   }
 
   const handleEdit = (record: ProviderRecord) => {
@@ -651,6 +723,10 @@ const ConfigProvider = () => {
       remark: record.remark,
       quota_url: record.quota_url,
       quota_format: record.quota_format,
+      quota_access_token: record.quota_access_token,
+      quota_refresh_token: record.quota_refresh_token,
+      quota_account_id: record.quota_account_id,
+      is_active: record.is_active,
     })
     setModalVisible(true)
   }
@@ -682,8 +758,9 @@ const ConfigProvider = () => {
         message.error('请填写 API Key')
         return
       }
-      if (values.quota_url && !values.quota_format) {
-        message.error('填写了 Quota URL 时必须同时选择 Quota Format')
+      if (values.quota_format === QUOTA_FORMAT_CHATGPT &&
+          (!values.quota_access_token || !values.quota_refresh_token)) {
+        message.error('ChatGPT 订阅配额查询需要 access_token 和 refresh_token')
         return
       }
 
@@ -811,6 +888,19 @@ const ConfigProvider = () => {
     },
     { title: '更新时间', dataIndex: 'update_time', width: 170, render: (t) => dayjs(t).format('YYYY-MM-DD HH:mm:ss') },
     {
+      title: '启用',
+      dataIndex: 'is_active',
+      width: 70,
+      render: (active: boolean, record) => (
+        <Switch
+          size="small"
+          checked={active}
+          disabled={!isRoot}
+          onChange={(checked) => void handleToggleActive(record, checked)}
+        />
+      ),
+    },
+    {
       title: '操作',
       width: 200,
       render: (_, record) => (
@@ -885,6 +975,14 @@ const ConfigProvider = () => {
             <Form.Item name="remark" label="备注">
               <Input.TextArea placeholder="输入备注信息..." rows={2} />
             </Form.Item>
+            <Form.Item
+              name="is_active"
+              label="是否启用"
+              tooltip="停用后该产商不参与路由转发，后台也不再定时拉取配额（仍可手动刷新）"
+              valuePropName="checked"
+            >
+              <Switch />
+            </Form.Item>
 
             <Form.Item style={{ marginBottom: 8 }}>
               <Typography.Text strong>接口地址</Typography.Text>
@@ -923,27 +1021,48 @@ const ConfigProvider = () => {
               <Input.Password placeholder="输入 API Key" />
             </Form.Item>
 
-            <Form.Item style={{ marginBottom: 8 }}>
-              <Typography.Text strong>配额查询（可选）</Typography.Text>
+            {/*
+              配额查询的 URL/Format 不暴露给用户（由预置产商写入），但保留
+              在 form 实例里随提交体回传——后端 UpdateProvider 是全列覆盖，
+              缺字段会把已有值清掉。
+            */}
+            <Form.Item name="quota_url" hidden>
+              <Input />
             </Form.Item>
-            <Form.Item
-              name="quota_url"
-              label="Quota URL"
-              tooltip="留空表示不查询此产商的配额"
-            >
-              <Input placeholder="如: https://www.minimaxi.com/v1/api/openplatform/coding_plan/remains" />
+            <Form.Item name="quota_format" hidden>
+              <Input />
             </Form.Item>
-            <Form.Item
-              name="quota_format"
-              label="Quota Format"
-              tooltip="选择此产商配额的响应格式"
-            >
-              <Select
-                allowClear
-                placeholder="选择配额格式"
-                options={QUOTA_FORMATS as unknown as { value: string; label: string }[]}
-              />
-            </Form.Item>
+
+            {quotaFormat === QUOTA_FORMAT_CHATGPT && (
+              <>
+                <Form.Item style={{ marginBottom: 8 }}>
+                  <Typography.Text strong>ChatGPT 订阅配额查询</Typography.Text>
+                </Form.Item>
+                <Form.Item
+                  name="quota_access_token"
+                  label="Access Token"
+                  tooltip="来自 ~/.codex/auth.json 的 tokens.access_token（先运行 codex login）"
+                  rules={[{ required: true, message: '请填写 access_token' }]}
+                >
+                  <Input.Password placeholder="tokens.access_token" />
+                </Form.Item>
+                <Form.Item
+                  name="quota_refresh_token"
+                  label="Refresh Token"
+                  tooltip="来自 ~/.codex/auth.json 的 tokens.refresh_token，access_token 过期后自动用它换新"
+                  rules={[{ required: true, message: '请填写 refresh_token' }]}
+                >
+                  <Input.Password placeholder="tokens.refresh_token" />
+                </Form.Item>
+                <Form.Item
+                  name="quota_account_id"
+                  label="Account ID（可选）"
+                  tooltip="来自 ~/.codex/auth.json 的 tokens.account_id，仅 Team 账号需要"
+                >
+                  <Input placeholder="tokens.account_id" />
+                </Form.Item>
+              </>
+            )}
 
           </Form>
 

@@ -16,7 +16,7 @@ var ErrNotFound = errors.New("not found")
 // Provider
 // ---------------------------------------------------------------------------
 
-const providerSelectCols = `id, name, openai_base_url, anthropic_base_url, responses_base_url, api_key, remark, quota_url, quota_format, create_time, update_time`
+const providerSelectCols = `id, name, openai_base_url, anthropic_base_url, responses_base_url, api_key, remark, quota_url, quota_format, quota_access_token, quota_refresh_token, quota_account_id, is_active, create_time, update_time`
 
 func GetProviders(ctx context.Context) ([]models.Provider, error) {
 	rows, err := mustHavePool().Query(ctx,
@@ -42,34 +42,42 @@ func GetProvider(ctx context.Context, id int) (*models.Provider, error) {
 }
 
 type CreateProviderInput struct {
-	Name             string  `json:"name"`
-	OpenAIBaseURL    *string `json:"openai_base_url,omitempty"`
-	AnthropicBaseURL *string `json:"anthropic_base_url,omitempty"`
-	ResponsesBaseURL *string `json:"responses_base_url,omitempty"`
-	APIKey           *string `json:"api_key,omitempty"`
-	Remark           *string `json:"remark,omitempty"`
-	QuotaURL         *string `json:"quota_url,omitempty"`
-	QuotaFormat      *string `json:"quota_format,omitempty"`
+	Name              string  `json:"name"`
+	OpenAIBaseURL     *string `json:"openai_base_url,omitempty"`
+	AnthropicBaseURL  *string `json:"anthropic_base_url,omitempty"`
+	ResponsesBaseURL  *string `json:"responses_base_url,omitempty"`
+	APIKey            *string `json:"api_key,omitempty"`
+	Remark            *string `json:"remark,omitempty"`
+	QuotaURL          *string `json:"quota_url,omitempty"`
+	QuotaFormat       *string `json:"quota_format,omitempty"`
+	QuotaAccessToken  *string `json:"quota_access_token,omitempty"`
+	QuotaRefreshToken *string `json:"quota_refresh_token,omitempty"`
+	QuotaAccountID    *string `json:"quota_account_id,omitempty"`
+	IsActive          *bool   `json:"is_active,omitempty"`
 }
 
 func CreateProvider(ctx context.Context, in CreateProviderInput) (*models.Provider, error) {
 	row := mustHavePool().QueryRow(ctx, `
-		INSERT INTO provider (name, openai_base_url, anthropic_base_url, responses_base_url, api_key, remark, quota_url, quota_format)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		INSERT INTO provider (name, openai_base_url, anthropic_base_url, responses_base_url, api_key, remark, quota_url, quota_format, quota_access_token, quota_refresh_token, quota_account_id, is_active)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, COALESCE($12, TRUE))
 		RETURNING `+providerSelectCols,
-		in.Name, in.OpenAIBaseURL, in.AnthropicBaseURL, in.ResponsesBaseURL, in.APIKey, in.Remark, in.QuotaURL, in.QuotaFormat)
+		in.Name, in.OpenAIBaseURL, in.AnthropicBaseURL, in.ResponsesBaseURL, in.APIKey, in.Remark, in.QuotaURL, in.QuotaFormat, in.QuotaAccessToken, in.QuotaRefreshToken, in.QuotaAccountID, in.IsActive)
 	return scanProvider(row)
 }
 
 type UpdateProviderInput struct {
-	Name             string  `json:"name"`
-	OpenAIBaseURL    *string `json:"openai_base_url,omitempty"`
-	AnthropicBaseURL *string `json:"anthropic_base_url,omitempty"`
-	ResponsesBaseURL *string `json:"responses_base_url,omitempty"`
-	APIKey           *string `json:"api_key,omitempty"`
-	Remark           *string `json:"remark,omitempty"`
-	QuotaURL         *string `json:"quota_url,omitempty"`
-	QuotaFormat      *string `json:"quota_format,omitempty"`
+	Name              string  `json:"name"`
+	OpenAIBaseURL     *string `json:"openai_base_url,omitempty"`
+	AnthropicBaseURL  *string `json:"anthropic_base_url,omitempty"`
+	ResponsesBaseURL  *string `json:"responses_base_url,omitempty"`
+	APIKey            *string `json:"api_key,omitempty"`
+	Remark            *string `json:"remark,omitempty"`
+	QuotaURL          *string `json:"quota_url,omitempty"`
+	QuotaFormat       *string `json:"quota_format,omitempty"`
+	QuotaAccessToken  *string `json:"quota_access_token,omitempty"`
+	QuotaRefreshToken *string `json:"quota_refresh_token,omitempty"`
+	QuotaAccountID    *string `json:"quota_account_id,omitempty"`
+	IsActive          *bool   `json:"is_active,omitempty"`
 }
 
 func UpdateProvider(ctx context.Context, id int, in UpdateProviderInput) (*models.Provider, error) {
@@ -83,10 +91,14 @@ func UpdateProvider(ctx context.Context, id int, in UpdateProviderInput) (*model
 		       remark = $7,
 		       quota_url = $8,
 		       quota_format = $9,
+		       quota_access_token = $10,
+		       quota_refresh_token = $11,
+		       quota_account_id = $12,
+		       is_active = COALESCE($13, is_active),
 		       update_time = CURRENT_TIMESTAMP
 		 WHERE id = $1
 		RETURNING `+providerSelectCols,
-		id, in.Name, in.OpenAIBaseURL, in.AnthropicBaseURL, in.ResponsesBaseURL, in.APIKey, in.Remark, in.QuotaURL, in.QuotaFormat)
+		id, in.Name, in.OpenAIBaseURL, in.AnthropicBaseURL, in.ResponsesBaseURL, in.APIKey, in.Remark, in.QuotaURL, in.QuotaFormat, in.QuotaAccessToken, in.QuotaRefreshToken, in.QuotaAccountID, in.IsActive)
 	p, err := scanProvider(row)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
@@ -95,6 +107,18 @@ func UpdateProvider(ctx context.Context, id int, in UpdateProviderInput) (*model
 		return nil, err
 	}
 	return p, nil
+}
+
+// UpdateProviderQuotaTokens persists rotated OAuth tokens after a quota
+// fetcher refreshed them upstream (e.g. Codex/ChatGPT token rotation).
+func UpdateProviderQuotaTokens(ctx context.Context, id int, accessToken, refreshToken string) error {
+	_, err := mustHavePool().Exec(ctx, `
+		UPDATE provider
+		   SET quota_access_token = $2,
+		       quota_refresh_token = $3,
+		       update_time = CURRENT_TIMESTAMP
+		 WHERE id = $1`, id, accessToken, refreshToken)
+	return err
 }
 
 func DeleteProvider(ctx context.Context, id int) error {
@@ -119,7 +143,9 @@ type rowScanner interface {
 func scanProvider(row rowScanner) (*models.Provider, error) {
 	var p models.Provider
 	err := row.Scan(&p.ID, &p.Name, &p.OpenAIBaseURL, &p.AnthropicBaseURL, &p.ResponsesBaseURL,
-		&p.APIKey, &p.Remark, &p.QuotaURL, &p.QuotaFormat, &p.CreateTime, &p.UpdateTime)
+		&p.APIKey, &p.Remark, &p.QuotaURL, &p.QuotaFormat,
+		&p.QuotaAccessToken, &p.QuotaRefreshToken, &p.QuotaAccountID,
+		&p.IsActive, &p.CreateTime, &p.UpdateTime)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
@@ -139,7 +165,9 @@ func scanProviders(rows interface {
 	for rows.Next() {
 		var p models.Provider
 		if err := rows.Scan(&p.ID, &p.Name, &p.OpenAIBaseURL, &p.AnthropicBaseURL, &p.ResponsesBaseURL,
-			&p.APIKey, &p.Remark, &p.QuotaURL, &p.QuotaFormat, &p.CreateTime, &p.UpdateTime); err != nil {
+			&p.APIKey, &p.Remark, &p.QuotaURL, &p.QuotaFormat,
+			&p.QuotaAccessToken, &p.QuotaRefreshToken, &p.QuotaAccountID,
+			&p.IsActive, &p.CreateTime, &p.UpdateTime); err != nil {
 			return nil, fmt.Errorf("scan providers: %w", err)
 		}
 		out = append(out, p)

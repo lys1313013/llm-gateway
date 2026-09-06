@@ -356,6 +356,7 @@ func ListProviderQuotas(c *gin.Context) {
 			"provider_id":   p.ID,
 			"provider_name": p.Name,
 			"has_config":    p.QuotaURL != nil && *p.QuotaURL != "",
+			"is_active":     p.IsActive,
 			"snapshot":      snap,
 			"present":       ok,
 		})

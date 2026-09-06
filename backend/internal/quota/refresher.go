@@ -5,16 +5,28 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/lys1313013/llm-gateway/backend/internal/db"
 	"github.com/lys1313013/llm-gateway/backend/internal/models"
 )
 
+// ProviderFetcher is an optional interface a Parser can implement to take
+// over the whole request — for formats whose upstream needs more than a
+// static "Authorization: Bearer <api_key>" (e.g. refreshable OAuth tokens).
+type ProviderFetcher interface {
+	FetchProvider(ctx context.Context, f *Fetcher, p models.Provider) (Snapshot, error)
+}
+
 // Fetcher owns the quota cache and the HTTP client used to talk to upstreams.
 type Fetcher struct {
 	Cache *Cache
 	HTTP  *http.Client
+
+	// providerLocks serializes per-provider fetches so concurrent refresh
+	// passes don't clobber rotated tokens (see chatGPTParser.FetchProvider).
+	providerLocks sync.Map // map[int]*sync.Mutex
 }
 
 func NewFetcher() *Fetcher {
@@ -22,6 +34,14 @@ func NewFetcher() *Fetcher {
 		Cache: NewCache(),
 		HTTP:  &http.Client{Timeout: 8 * time.Second},
 	}
+}
+
+// lockProvider returns an unlock func holding the per-provider mutex.
+func (f *Fetcher) lockProvider(id int) func() {
+	mu, _ := f.providerLocks.LoadOrStore(id, &sync.Mutex{})
+	m := mu.(*sync.Mutex)
+	m.Lock()
+	return m.Unlock
 }
 
 // global is the process-wide Fetcher, set by InitGlobal in main.
@@ -54,6 +74,24 @@ func (f *Fetcher) RefreshOne(ctx context.Context, p models.Provider) {
 		slog.Warn("quota: unknown format, skipping", "id", p.ID, "format", *p.QuotaFormat)
 		return
 	}
+
+	// Formats with their own credential lifecycle (e.g. chatgpt) manage the
+	// whole request themselves and don't need api_key.
+	if pf, ok := parser.(ProviderFetcher); ok {
+		snap, err := pf.FetchProvider(ctx, f, p)
+		if err != nil {
+			slog.Warn("quota: refresh failed", "id", p.ID, "name", p.Name, "err", err)
+			prev, _ := f.Cache.Get(p.ID)
+			prev.LastError = err.Error()
+			prev.FetchedAt = time.Now()
+			f.Cache.Set(p.ID, prev)
+			return
+		}
+		f.Cache.Set(p.ID, snap)
+		slog.Info("quota: refreshed", "id", p.ID, "name", p.Name, "type", snap.DisplayType)
+		return
+	}
+
 	if p.APIKey == nil || *p.APIKey == "" {
 		f.Cache.Set(p.ID, Snapshot{
 			DisplayType: "",
@@ -130,6 +168,11 @@ func (f *Fetcher) refreshAllProviders(ctx context.Context) {
 	}
 	for _, p := range providers {
 		if p.QuotaURL == nil || *p.QuotaURL == "" {
+			continue
+		}
+		// Disabled providers keep their last cached snapshot; manual refresh
+		// (RefreshOne) is still allowed so users can check a lapsed plan.
+		if !p.IsActive {
 			continue
 		}
 		f.RefreshOne(ctx, p)

@@ -10,17 +10,27 @@ import (
 // ---------------------------------------------------------------------------
 
 type Provider struct {
-	ID               int       `json:"id"`
-	Name             string    `json:"name"`
-	OpenAIBaseURL    *string   `json:"openai_base_url,omitempty"`
-	AnthropicBaseURL *string   `json:"anthropic_base_url,omitempty"`
-	ResponsesBaseURL *string   `json:"responses_base_url,omitempty"`
-	APIKey           *string   `json:"api_key,omitempty"`
-	Remark           *string   `json:"remark,omitempty"`
-	QuotaURL         *string   `json:"quota_url,omitempty"`
-	QuotaFormat      *string   `json:"quota_format,omitempty"`
-	CreateTime       time.Time `json:"create_time"`
-	UpdateTime       time.Time `json:"update_time"`
+	ID               int     `json:"id"`
+	Name             string  `json:"name"`
+	OpenAIBaseURL    *string `json:"openai_base_url,omitempty"`
+	AnthropicBaseURL *string `json:"anthropic_base_url,omitempty"`
+	ResponsesBaseURL *string `json:"responses_base_url,omitempty"`
+	APIKey           *string `json:"api_key,omitempty"`
+	Remark           *string `json:"remark,omitempty"`
+	QuotaURL         *string `json:"quota_url,omitempty"`
+	QuotaFormat      *string `json:"quota_format,omitempty"`
+	// OAuth token triple for quota formats whose upstream requires refreshable
+	// credentials (e.g. ChatGPT subscription via Codex OAuth). Plain columns,
+	// same protection level as api_key.
+	QuotaAccessToken  *string `json:"quota_access_token,omitempty"`
+	QuotaRefreshToken *string `json:"quota_refresh_token,omitempty"`
+	QuotaAccountID    *string `json:"quota_account_id,omitempty"`
+	// IsActive gates routing (GetActiveRoutes) and the background quota
+	// refresher — disabled providers (e.g. lapsed subscription) stay in the
+	// list but receive no traffic.
+	IsActive   bool      `json:"is_active"`
+	CreateTime time.Time `json:"create_time"`
+	UpdateTime time.Time `json:"update_time"`
 }
 
 type ModelRoute struct {
