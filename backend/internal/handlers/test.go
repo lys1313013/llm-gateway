@@ -14,6 +14,18 @@ import (
 	"github.com/lys1313013/llm-gateway/backend/internal/proxy"
 )
 
+// testRouteTeamID 决定测试请求按哪个团队的路由去匹配：请求体里的 team_id 优先
+// （root 在管理页测别的团队的模型），缺省回落到调用者自己的团队。
+//
+// 这里刻意不做 requireModelAccess 那套授权：/api/test/* 是管理页的连通性测试，
+// 必须能测任意团队的模型，闸门加上去会让「测试」按钮对有问题的记录永久 403。
+func testRouteTeamID(c *gin.Context, data map[string]any) int {
+	if v, ok := data["team_id"].(float64); ok && v > 0 {
+		return int(v)
+	}
+	return routeTeamID(c)
+}
+
 // TestChat is the admin-only OpenAI test endpoint (/api/test/chat).
 // Authentication is JWT (the RequireAuth middleware already ran); we don't
 // need an API key.
@@ -33,7 +45,7 @@ func TestChat(c *gin.Context) {
 		return
 	}
 	model, _ := data["model"].(string)
-	routes, err := db.GetActiveRoutes(c.Request.Context())
+	routes, err := db.GetActiveRoutes(c.Request.Context(), testRouteTeamID(c, data))
 	if err != nil {
 		serverError(c, err)
 		return
@@ -111,7 +123,7 @@ func TestMessages(c *gin.Context) {
 		return
 	}
 	model, _ := data["model"].(string)
-	routes, err := db.GetActiveRoutes(c.Request.Context())
+	routes, err := db.GetActiveRoutes(c.Request.Context(), testRouteTeamID(c, data))
 	if err != nil {
 		serverError(c, err)
 		return

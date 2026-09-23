@@ -34,18 +34,20 @@ type Provider struct {
 }
 
 type ModelRoute struct {
-	ID           int       `json:"id"`
-	ModelPattern string    `json:"model_pattern"`
-	RouteType    string    `json:"route_type"`
-	ProviderID   *int      `json:"provider_id,omitempty"`
-	TargetModel  *string   `json:"target_model,omitempty"`
-	Timeout      int       `json:"timeout"`
-	LogRequests  bool      `json:"log_requests"`
-	LogResponses bool      `json:"log_responses"`
-	Priority     int       `json:"priority"`
-	IsActive     bool      `json:"is_active"`
-	CreateTime   time.Time `json:"create_time"`
-	UpdateTime   time.Time `json:"update_time"`
+	ID           int     `json:"id"`
+	ModelPattern string  `json:"model_pattern"`
+	RouteType    string  `json:"route_type"`
+	ProviderID   *int    `json:"provider_id,omitempty"`
+	TargetModel  *string `json:"target_model,omitempty"`
+	Timeout      int     `json:"timeout"`
+	LogRequests  bool    `json:"log_requests"`
+	LogResponses bool    `json:"log_responses"`
+	Priority     int     `json:"priority"`
+	IsActive     bool    `json:"is_active"`
+	// 路由同样必须归属团队，没有"公共路由"
+	TeamID     int       `json:"team_id"`
+	CreateTime time.Time `json:"create_time"`
+	UpdateTime time.Time `json:"update_time"`
 
 	// Joined fields from provider
 	OpenAIBaseURL    *string `json:"openai_base_url,omitempty"`
@@ -53,14 +55,17 @@ type ModelRoute struct {
 	ResponsesBaseURL *string `json:"responses_base_url,omitempty"`
 	APIKey           *string `json:"api_key,omitempty"`
 	ProviderName     *string `json:"provider_name,omitempty"`
+	// Joined field from team
+	TeamName string `json:"team_name,omitempty"`
 }
 
 type ExposedModel struct {
-	ID                      int        `json:"id"`
-	ModelID                 string     `json:"model_id"`
-	OwnedBy                 string     `json:"owned_by"`
-	IsActive                bool       `json:"is_active"`
-	TeamID                  *int       `json:"team_id,omitempty"`
+	ID       int    `json:"id"`
+	ModelID  string `json:"model_id"`
+	OwnedBy  string `json:"owned_by"`
+	IsActive bool   `json:"is_active"`
+	// 每个模型必须归属一个团队，没有"全局可见"这种状态
+	TeamID                  int        `json:"team_id"`
 	TeamName                string     `json:"team_name,omitempty"`
 	LastOpenAITestTime      *time.Time `json:"last_openai_test_time,omitempty"`
 	LastAnthropicTestTime   *time.Time `json:"last_anthropic_test_time,omitempty"`

@@ -16,6 +16,9 @@ export type RouteRecord = {
   log_responses: boolean
   priority: number
   is_active: boolean
+  /** 路由按团队隔离，没有「公共路由」 */
+  team_id: number
+  team_name?: string
   create_time: string
   update_time: string
 }
@@ -25,6 +28,7 @@ const ConfigRoute = () => {
   const isRoot = (currentUser?.role ?? 99) === 1
   const [data, setData] = useState<RouteRecord[]>([])
   const [providers, setProviders] = useState<ProviderRecord[]>([])
+  const [teams, setTeams] = useState<{ id: number; name: string }[]>([])
   const [loading, setLoading] = useState(false)
   const [modalVisible, setModalVisible] = useState(false)
   const [editingRecord, setEditingRecord] = useState<RouteRecord | null>(null)
@@ -43,6 +47,12 @@ const ConfigRoute = () => {
       ])
       if (jsonRoutes.success) setData(jsonRoutes.data ?? [])
       if (jsonProviders.success) setProviders(jsonProviders.data ?? [])
+      // 团队列表只有 root 用得上（新增/编辑弹窗是 root-only），拉取失败不阻塞页面
+      if (isRoot) {
+        const resTeams = await apiFetch('/api/team')
+        const jsonTeams = await resTeams.json()
+        if (jsonTeams.success) setTeams(jsonTeams.data ?? [])
+      }
     } catch {
       message.error('获取路由或产商列表失败')
     } finally {
@@ -67,8 +77,15 @@ const ConfigRoute = () => {
       defaultProviderId = providers[0].id
     }
 
+    // route_type 在弹窗里没有对应控件，但库里是 NOT NULL —— 不显式给个值，
+    // 新增会直接撞空值约束报 500。路由匹配实际看的是 provider 的 base_url，
+    // 这个字段目前不参与判定。
+    const defaultTeamId = teams.length > 0 ? teams[0].id : undefined
+
     form.setFieldsValue({
       provider_id: defaultProviderId,
+      route_type: 'openai',
+      team_id: defaultTeamId,
       timeout: 600,
       log_requests: true,
       log_responses: true,
@@ -131,6 +148,14 @@ const ConfigRoute = () => {
 
   const columns: TableColumnsType<RouteRecord> = [
     { title: 'ID', dataIndex: 'id', width: 60 },
+    {
+      title: '所属团队',
+      dataIndex: 'team_name',
+      width: 130,
+      render: (name: string, record: RouteRecord) => (
+        <Tag color="purple">{name || `团队 #${record.team_id}`}</Tag>
+      ),
+    },
     { title: '模型匹配规则', dataIndex: 'model_pattern' },
     {
       title: '目标产商',
@@ -211,6 +236,20 @@ const ConfigRoute = () => {
           </Form.Item>
 
           <Row gutter={16}>
+            <Col span={12}>
+              <Form.Item
+                name="team_id"
+                label="所属团队"
+                tooltip="路由只对该团队生效，没有公共路由"
+                rules={[{ required: true, message: '请选择所属团队' }]}
+              >
+                <Select
+                  style={{ width: '100%' }}
+                  placeholder="选择团队"
+                  options={teams.map((t) => ({ value: t.id, label: t.name }))}
+                />
+              </Form.Item>
+            </Col>
             <Col span={12}>
               <Form.Item name="provider_id" label="目标产商" rules={[{ required: true }]}>
                 <Select

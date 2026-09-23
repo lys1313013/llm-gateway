@@ -122,6 +122,13 @@ func registerTestRoutes(r *gin.Engine) {
 	r.DELETE("/api/exposed_model/:id", handlers.DeleteExposedModel)
 	r.PUT("/api/exposed_model/:id/test_time", handlers.UpdateExposedModelTestTime)
 
+	r.GET("/api/team", handlers.ListTeams)
+	r.GET("/api/team/:id", handlers.GetTeam)
+	r.POST("/api/team", handlers.CreateTeam)
+	r.PUT("/api/team/:id", handlers.UpdateTeam)
+	r.DELETE("/api/team/:id", handlers.DeleteTeam)
+	authGrp.PUT("/users/:user_id/team", handlers.UpdateUserTeam)
+
 	r.GET("/api/logs", handlers.ListLogs)
 	r.GET("/api/logs/:id", handlers.GetLogDetail)
 	r.DELETE("/api/logs/:id", handlers.DeleteLog)
@@ -565,6 +572,13 @@ func TestConcurrentLoad(t *testing.T) {
 
 func registerAndPromote(t *testing.T, r http.Handler, prefix string) map[string]string {
 	t.Helper()
+	return registerPromote(t, r, prefix, true)
+}
+
+// registerPromote is registerAndPromote with control over team assignment.
+// withTeam=false 造出一个「无团队管理员」，用来验证无豁免规则。
+func registerPromote(t *testing.T, r http.Handler, prefix string, withTeam bool) map[string]string {
+	t.Helper()
 	suffix := time.Now().UnixNano()
 	username := fmt.Sprintf("%s_%d", prefix, suffix)
 
@@ -586,6 +600,29 @@ func registerAndPromote(t *testing.T, r http.Handler, prefix string) map[string]
 	t.Cleanup(func() {
 		db.Pool.Exec(context.Background(), "DELETE FROM users WHERE id = $1", userID)
 	})
+
+	if withTeam {
+		// exposed_model / model_route 都必须归属团队，而管理接口对非 root 又强制
+		// 写自己团队 —— 没有团队的测试用户一条记录都建不出来。团队必须在重新
+		// 登录之前挂好，否则 JWT 里的 team_id 是空的。
+		team, err := db.CreateTeam(context.Background(), db.CreateTeamInput{
+			Name: fmt.Sprintf("%s_team_%d", prefix, suffix),
+		})
+		if err != nil {
+			t.Fatalf("%s create team: %v", prefix, err)
+		}
+		if err := db.UpdateUserTeam(context.Background(), userID, &team.ID); err != nil {
+			t.Fatalf("%s assign team: %v", prefix, err)
+		}
+		// 后注册的 cleanup 先执行：这里必须先清掉团队名下的模型/路由，
+		// 再删团队，否则 RESTRICT 外键会拒绝（而 cleanup 的报错是无声的）。
+		t.Cleanup(func() {
+			ctx := context.Background()
+			db.Pool.Exec(ctx, "DELETE FROM model_route WHERE team_id = $1", team.ID)
+			db.Pool.Exec(ctx, "DELETE FROM exposed_model WHERE team_id = $1", team.ID)
+			db.Pool.Exec(ctx, "DELETE FROM team WHERE id = $1", team.ID)
+		})
+	}
 
 	w, body = doJSON(t, r, "POST", "/api/auth/login", map[string]string{
 		"username": username,
@@ -618,7 +655,17 @@ func TestRouteCRUD(t *testing.T) {
 	}
 	pid := int(pbody["data"].(map[string]any)["id"].(float64))
 
-	// Create
+	// Create —— team_id 故意指向别人的团队：非 root 必须被强制写回自己团队
+	otherTeam, err := db.CreateTeam(context.Background(), db.CreateTeamInput{
+		Name: fmt.Sprintf("gtest_route_other_%d", time.Now().UnixNano()),
+	})
+	if err != nil {
+		t.Fatalf("create other team: %v", err)
+	}
+	t.Cleanup(func() {
+		db.Pool.Exec(context.Background(), "DELETE FROM team WHERE id = $1", otherTeam.ID)
+	})
+
 	w, rbody := doJSON(t, r, "POST", "/api/route", map[string]any{
 		"model_pattern": "gpt-4o-route-test",
 		"route_type":    "openai",
@@ -627,11 +674,16 @@ func TestRouteCRUD(t *testing.T) {
 		"timeout":       30,
 		"priority":      1,
 		"is_active":     true,
+		"team_id":       otherTeam.ID,
 	}, auth)
 	if w.Code != 200 {
 		t.Fatalf("create route: %d: %s", w.Code, w.Body.String())
 	}
-	rid := int(rbody["data"].(map[string]any)["id"].(float64))
+	routeData := rbody["data"].(map[string]any)
+	rid := int(routeData["id"].(float64))
+	if got := int(routeData["team_id"].(float64)); got == otherTeam.ID || got == 0 {
+		t.Fatalf("non-root admin must be forced into its own team, got team_id=%d (other=%d)", got, otherTeam.ID)
+	}
 
 	// List
 	w, _ = doJSON(t, r, "GET", "/api/route", nil, auth)
@@ -676,17 +728,32 @@ func TestRouteCRUD(t *testing.T) {
 func TestExposedModelCRUD(t *testing.T) {
 	r := setupRouter(t)
 	auth := registerAndPromote(t, r, "gtest_model")
+	modelName := fmt.Sprintf("gtest-exposed-%d", time.Now().UnixNano())
 
-	// Create
+	// Create —— 不带 team_id：非 root 强制写自己团队
 	w, mbody := doJSON(t, r, "POST", "/api/exposed_model", map[string]any{
-		"model_id": fmt.Sprintf("gtest-exposed-%d", time.Now().UnixNano()),
+		"model_id": modelName,
 		"owned_by": "gtest-org",
 		"is_active": true,
 	}, auth)
 	if w.Code != 200 {
 		t.Fatalf("create model: %d: %s", w.Code, w.Body.String())
 	}
-	mid := int(mbody["data"].(map[string]any)["id"].(float64))
+	created := mbody["data"].(map[string]any)
+	mid := int(created["id"].(float64))
+	myTeam := int(created["team_id"].(float64))
+	if myTeam == 0 {
+		t.Fatalf("model must be assigned to the creator's team, got team_id=%v", created["team_id"])
+	}
+
+	// 同团队重复 → 409
+	w, _ = doJSON(t, r, "POST", "/api/exposed_model", map[string]any{
+		"model_id": modelName,
+		"owned_by": "gtest-org",
+	}, auth)
+	if w.Code != 409 {
+		t.Fatalf("duplicate in same team: expected 409, got %d: %s", w.Code, w.Body.String())
+	}
 
 	// List
 	w, _ = doJSON(t, r, "GET", "/api/exposed_model", nil, auth)
@@ -700,14 +767,33 @@ func TestExposedModelCRUD(t *testing.T) {
 		t.Fatalf("get model: %d", w.Code)
 	}
 
-	// Update
-	w, _ = doJSON(t, r, "PUT", fmt.Sprintf("/api/exposed_model/%d", mid), map[string]any{
-		"model_id": fmt.Sprintf("gtest-exposed-upd-%d", time.Now().UnixNano()),
-		"owned_by": "gtest-org-v2",
+	// 只发 is_active 的部分更新不能清空其余字段（前端切开关走的就是这条路径）
+	w, pbody := doJSON(t, r, "PUT", fmt.Sprintf("/api/exposed_model/%d", mid), map[string]any{
 		"is_active": false,
 	}, auth)
 	if w.Code != 200 {
-		t.Fatalf("update model: %d", w.Code)
+		t.Fatalf("partial update: %d: %s", w.Code, w.Body.String())
+	}
+	after := pbody["data"].(map[string]any)
+	if after["model_id"] != modelName {
+		t.Fatalf("partial update wiped model_id: got %v, want %s", after["model_id"], modelName)
+	}
+	if got := int(after["team_id"].(float64)); got != myTeam {
+		t.Fatalf("partial update changed team_id: got %d, want %d", got, myTeam)
+	}
+	if after["is_active"] != false {
+		t.Fatalf("partial update did not apply is_active: got %v", after["is_active"])
+	}
+
+	// Update
+	updatedName := fmt.Sprintf("gtest-exposed-upd-%d", time.Now().UnixNano())
+	w, _ = doJSON(t, r, "PUT", fmt.Sprintf("/api/exposed_model/%d", mid), map[string]any{
+		"model_id": updatedName,
+		"owned_by": "gtest-org-v2",
+		"is_active": true,
+	}, auth)
+	if w.Code != 200 {
+		t.Fatalf("update model: %d: %s", w.Code, w.Body.String())
 	}
 
 	// Update test_time
@@ -723,6 +809,221 @@ func TestExposedModelCRUD(t *testing.T) {
 	if w.Code != 200 {
 		t.Fatalf("delete model: %d", w.Code)
 	}
+}
+
+// ---------------------------------------------------------------------------
+// Multi-tenant isolation
+// ---------------------------------------------------------------------------
+
+// 同名模型被两个团队各自登记、且互相读不到改不了 —— 这是 (model_id, team_id)
+// 复合唯一 + 行级团队校验要保证的核心语义。
+func TestExposedModelTeamIsolation(t *testing.T) {
+	r := setupRouter(t)
+	authA := registerAndPromote(t, r, "gtest_iso_a")
+	authB := registerAndPromote(t, r, "gtest_iso_b")
+
+	modelName := fmt.Sprintf("gtest-iso-%d", time.Now().UnixNano())
+
+	w, abody := doJSON(t, r, "POST", "/api/exposed_model", map[string]any{
+		"model_id": modelName,
+		"owned_by": "gtest",
+	}, authA)
+	if w.Code != 200 {
+		t.Fatalf("team A create: %d: %s", w.Code, w.Body.String())
+	}
+	aData := abody["data"].(map[string]any)
+	aID := int(aData["id"].(float64))
+	aTeam := int(aData["team_id"].(float64))
+
+	// 团队 B 注册同名模型必须成功（全局唯一已经取消）
+	w, bbody := doJSON(t, r, "POST", "/api/exposed_model", map[string]any{
+		"model_id": modelName,
+		"owned_by": "gtest",
+	}, authB)
+	if w.Code != 200 {
+		t.Fatalf("team B must be able to register the same model_id: %d: %s", w.Code, w.Body.String())
+	}
+	bData := bbody["data"].(map[string]any)
+	bTeam := int(bData["team_id"].(float64))
+	if aTeam == bTeam {
+		t.Fatalf("expected two distinct teams, both got %d", aTeam)
+	}
+
+	// B 对 A 的记录：读、改、删、写测试时间全部 403
+	for _, tc := range []struct {
+		method, path string
+		body         any
+	}{
+		{"GET", fmt.Sprintf("/api/exposed_model/%d", aID), nil},
+		{"PUT", fmt.Sprintf("/api/exposed_model/%d", aID), map[string]any{"owned_by": "hijacked"}},
+		{"DELETE", fmt.Sprintf("/api/exposed_model/%d", aID), nil},
+		{"PUT", fmt.Sprintf("/api/exposed_model/%d/test_time", aID), map[string]any{"protocol": "openai"}},
+	} {
+		w, _ = doJSON(t, r, tc.method, tc.path, tc.body, authB)
+		if w.Code != 403 {
+			t.Fatalf("cross-team %s %s: expected 403, got %d: %s", tc.method, tc.path, w.Code, w.Body.String())
+		}
+	}
+
+	// 列表各自只看到自己的那条
+	w, listA := doJSON(t, r, "GET", "/api/exposed_model", nil, authA)
+	if w.Code != 200 {
+		t.Fatalf("list A: %d", w.Code)
+	}
+	if n := len(listA["data"].([]any)); n != 1 {
+		t.Fatalf("team A should see exactly its own model, got %d rows", n)
+	}
+}
+
+// 无团队用户一律拒绝：列表为空、建不了记录。
+func TestTeamlessUserDenied(t *testing.T) {
+	r := setupRouter(t)
+	auth := registerPromote(t, r, "gtest_noteam", false)
+
+	w, body := doJSON(t, r, "GET", "/api/exposed_model", nil, auth)
+	if w.Code != 200 {
+		t.Fatalf("list: %d", w.Code)
+	}
+	if n := len(body["data"].([]any)); n != 0 {
+		t.Fatalf("teamless user must see no models, got %d", n)
+	}
+
+	w, _ = doJSON(t, r, "POST", "/api/exposed_model", map[string]any{
+		"model_id": fmt.Sprintf("gtest-noteam-%d", time.Now().UnixNano()),
+	}, auth)
+	if w.Code != 403 {
+		t.Fatalf("teamless create: expected 403, got %d: %s", w.Code, w.Body.String())
+	}
+
+	w, _ = doJSON(t, r, "POST", "/api/route", map[string]any{
+		"model_pattern": "gtest-noteam-*",
+		"route_type":    "openai",
+	}, auth)
+	if w.Code != 403 {
+		t.Fatalf("teamless create route: expected 403, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// /v1 的转发前授权闸门：模型必须在本团队清单里，否则 403（而不是 404 ——
+// 先授权再路由，错误码不该泄漏上游有没有配这条路由）。
+func TestV1ModelAccessGate(t *testing.T) {
+	r := setupRouter(t)
+
+	mintKey := func(auth map[string]string, name string) map[string]string {
+		w, body := doJSON(t, r, "POST", "/api/auth/api_keys", map[string]string{"name": name}, auth)
+		if w.Code != 200 && w.Code != 201 {
+			t.Fatalf("create api key %s: %d: %s", name, w.Code, w.Body.String())
+		}
+		data := body["data"].(map[string]any)
+		key, _ := data["key"].(string)
+		kid := int(data["id"].(float64))
+		t.Cleanup(func() {
+			doJSON(t, r, "DELETE", fmt.Sprintf("/api/auth/api_keys/%d", kid), nil, auth)
+		})
+		return map[string]string{"Authorization": "Bearer " + key}
+	}
+
+	chatBody := map[string]any{
+		"model":    "gtest-gate-anything",
+		"messages": []map[string]string{{"role": "user", "content": "hi"}},
+	}
+
+	// 无团队用户：列表为空，调用一律 403
+	teamless := mintKey(registerPromote(t, r, "gtest_v1_noteam", false), "gate-noteam")
+	w, body := doJSON(t, r, "GET", "/v1/models", nil, teamless)
+	if w.Code != 200 {
+		t.Fatalf("teamless /v1/models: %d", w.Code)
+	}
+	if n := len(body["data"].([]any)); n != 0 {
+		t.Fatalf("teamless user must see an empty model list, got %d", n)
+	}
+	w, _ = doJSON(t, r, "POST", "/v1/chat/completions", chatBody, teamless)
+	if w.Code != 403 {
+		t.Fatalf("teamless /v1 call: expected 403, got %d: %s", w.Code, w.Body.String())
+	}
+
+	// 有团队但模型未暴露 → 403
+	auth := registerAndPromote(t, r, "gtest_v1_gate")
+	key := mintKey(auth, "gate-member")
+	w, _ = doJSON(t, r, "POST", "/v1/chat/completions", chatBody, key)
+	if w.Code != 403 {
+		t.Fatalf("unexposed model: expected 403, got %d: %s", w.Code, w.Body.String())
+	}
+
+	// 暴露之后闸门放行，但没配路由 → 404（证明闸门跑在路由匹配之前）
+	modelName := fmt.Sprintf("gtest-gate-exposed-%d", time.Now().UnixNano())
+	w, _ = doJSON(t, r, "POST", "/api/exposed_model", map[string]any{
+		"model_id": modelName,
+		"owned_by": "gtest",
+	}, auth)
+	if w.Code != 200 {
+		t.Fatalf("expose model: %d: %s", w.Code, w.Body.String())
+	}
+	w, _ = doJSON(t, r, "POST", "/v1/chat/completions", map[string]any{
+		"model":    modelName,
+		"messages": []map[string]string{{"role": "user", "content": "hi"}},
+	}, key)
+	if w.Code != 404 {
+		t.Fatalf("exposed model without a route: expected 404, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// 删除仍被引用的团队必须给可读的 409，而不是裸的 PG 外键报错。
+func TestDeleteTeamWithResources(t *testing.T) {
+	r := setupRouter(t)
+	auth := registerAndPromote(t, r, "gtest_teamdel")
+
+	w, mbody := doJSON(t, r, "POST", "/api/exposed_model", map[string]any{
+		"model_id": fmt.Sprintf("gtest-teamdel-%d", time.Now().UnixNano()),
+	}, auth)
+	if w.Code != 200 {
+		t.Fatalf("create model: %d: %s", w.Code, w.Body.String())
+	}
+	teamID := int(mbody["data"].(map[string]any)["team_id"].(float64))
+
+	// 删团队需要 root；用 DB 直接把测试用户提成 root 再造一个新 token 太重，
+	// 这里直接验证 handler 的预检逻辑 —— 先建一个 root 用户。
+	rootAuth := registerRoot(t, r, "gtest_teamdel_root")
+	w, body := doJSON(t, r, "DELETE", fmt.Sprintf("/api/team/%d", teamID), nil, rootAuth)
+	if w.Code != 409 {
+		t.Fatalf("delete team with models: expected 409, got %d: %s", w.Code, w.Body.String())
+	}
+	if msg, _ := body["message"].(string); !strings.Contains(msg, "1 个模型") {
+		t.Fatalf("expected a readable message mentioning the model count, got %q", msg)
+	}
+}
+
+// registerRoot 与 registerPromote 同理，但把用户提成 root（role=1）。
+func registerRoot(t *testing.T, r http.Handler, prefix string) map[string]string {
+	t.Helper()
+	suffix := time.Now().UnixNano()
+	username := fmt.Sprintf("%s_%d", prefix, suffix)
+
+	w, body := doJSON(t, r, "POST", "/api/auth/register", map[string]string{
+		"username": username,
+		"password": "test_pw_1234",
+	}, nil)
+	if w.Code != 201 {
+		t.Fatalf("%s register: %d", prefix, w.Code)
+	}
+	user, _ := body["data"].(map[string]any)["user"].(map[string]any)
+	userID := int(user["id"].(float64))
+	if err := db.UpdateUserRole(context.Background(), userID, 1); err != nil {
+		t.Fatalf("%s promote root: %v", prefix, err)
+	}
+	t.Cleanup(func() {
+		db.Pool.Exec(context.Background(), "DELETE FROM users WHERE id = $1", userID)
+	})
+
+	w, body = doJSON(t, r, "POST", "/api/auth/login", map[string]string{
+		"username": username,
+		"password": "test_pw_1234",
+	}, nil)
+	if w.Code != 200 {
+		t.Fatalf("%s re-login: %d", prefix, w.Code)
+	}
+	token, _ := body["data"].(map[string]any)["token"].(string)
+	return map[string]string{"Authorization": "Bearer " + token}
 }
 
 // ---------------------------------------------------------------------------
@@ -787,7 +1088,13 @@ func TestUserManagement(t *testing.T) {
 	r := setupRouter(t)
 	auth := registerAndPromote(t, r, "gtest_usermgmt")
 
-	// ListUsers
+	meW, meBody := doJSON(t, r, "GET", "/api/auth/me", nil, auth)
+	if meW.Code != 200 {
+		t.Fatalf("me: %d", meW.Code)
+	}
+	myTeam := int(meBody["data"].(map[string]any)["team_id"].(float64))
+
+	// ListUsers —— role=2 只看到本团队成员，所以至少要能看到自己
 	w, lbody := doJSON(t, r, "GET", "/api/auth/users", nil, auth)
 	if w.Code != 200 {
 		t.Fatalf("list users: %d", w.Code)
@@ -808,16 +1115,17 @@ func TestUserManagement(t *testing.T) {
 	}
 	duid := int(dbody["data"].(map[string]any)["user"].(map[string]any)["id"].(float64))
 
+	// 待删用户必须落在同一团队：role=2 只能删本团队成员，新注册用户默认无团队
+	if err := db.UpdateUserTeam(context.Background(), duid, &myTeam); err != nil {
+		t.Fatalf("assign disposable user to the admin's team: %v", err)
+	}
+
 	w, _ = doJSON(t, r, "DELETE", fmt.Sprintf("/api/auth/users/%d", duid), nil, auth)
 	if w.Code != 200 {
 		t.Fatalf("delete user: %d: %s", w.Code, w.Body.String())
 	}
 
 	// Cannot self-delete: verify the admin can't delete themselves
-	meW, meBody := doJSON(t, r, "GET", "/api/auth/me", nil, auth)
-	if meW.Code != 200 {
-		t.Fatalf("me: %d", meW.Code)
-	}
 	myID := int(meBody["data"].(map[string]any)["id"].(float64))
 	w, _ = doJSON(t, r, "DELETE", fmt.Sprintf("/api/auth/users/%d", myID), nil, auth)
 	if w.Code != 400 {
@@ -1089,6 +1397,17 @@ func setupUpstreamRoute(t *testing.T, r http.Handler, auth map[string]string, ro
 	}, auth)
 	if w.Code != 200 {
 		t.Fatalf("create upstream route: %d: %s", w.Code, w.Body.String())
+	}
+
+	// /v1 转发前有授权闸门：模型必须出现在调用者团队的 exposed_model 清单里，
+	// 否则 403 —— 光有路由不够。
+	w, _ = doJSON(t, r, "POST", "/api/exposed_model", map[string]any{
+		"model_id":  modelPattern,
+		"owned_by":  "gtest-upstream",
+		"is_active": true,
+	}, auth)
+	if w.Code != 200 {
+		t.Fatalf("create upstream exposed model: %d: %s", w.Code, w.Body.String())
 	}
 }
 

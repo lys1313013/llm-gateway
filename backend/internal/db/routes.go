@@ -16,6 +16,7 @@ import (
 const routeSelectCols = `
 	r.id, r.model_pattern, r.route_type, r.provider_id, r.target_model,
 	r.timeout, COALESCE(r.log_requests, TRUE), COALESCE(r.log_responses, TRUE), r.priority, r.is_active,
+	r.team_id, t.name,
 	r.create_time, r.update_time,
 	p.openai_base_url, p.anthropic_base_url, p.responses_base_url, p.api_key, p.name
 `
@@ -23,9 +24,22 @@ const routeSelectCols = `
 const routeFromJoin = `
 	FROM model_route r
 	LEFT JOIN provider p ON p.id = r.provider_id
+	JOIN team t ON t.id = r.team_id
 `
 
-func GetRoutes(ctx context.Context) ([]models.ModelRoute, error) {
+// GetRoutes 是某个团队视角的路由列表；GetAllRoutes 是 root 管理页的全量视角。
+func GetRoutes(ctx context.Context, teamID int) ([]models.ModelRoute, error) {
+	rows, err := mustHavePool().Query(ctx,
+		`SELECT `+routeSelectCols+routeFromJoin+
+			` WHERE r.team_id = $1 ORDER BY r.priority DESC, r.id ASC`, teamID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanRoutes(rows)
+}
+
+func GetAllRoutes(ctx context.Context) ([]models.ModelRoute, error) {
 	rows, err := mustHavePool().Query(ctx,
 		`SELECT `+routeSelectCols+routeFromJoin+` ORDER BY r.priority DESC, r.id ASC`)
 	if err != nil {
@@ -49,11 +63,13 @@ func GetRoute(ctx context.Context, id int) (*models.ModelRoute, error) {
 }
 
 // GetActiveRoutes returns routes eligible for proxying: the route itself is
-// active AND its provider (if still linked) is not disabled.
-func GetActiveRoutes(ctx context.Context) ([]models.ModelRoute, error) {
+// active AND its provider (if still linked) is not disabled. 只返回调用者
+// 所属团队的路由 —— 没有"公共路由"可以回退。
+func GetActiveRoutes(ctx context.Context, teamID int) ([]models.ModelRoute, error) {
 	rows, err := mustHavePool().Query(ctx,
 		`SELECT `+routeSelectCols+routeFromJoin+
-			` WHERE r.is_active = TRUE AND (p.is_active IS NULL OR p.is_active = TRUE) ORDER BY r.priority DESC, r.id ASC`)
+			` WHERE r.team_id = $1 AND r.is_active = TRUE AND (p.is_active IS NULL OR p.is_active = TRUE) ORDER BY r.priority DESC, r.id ASC`,
+		teamID)
 	if err != nil {
 		return nil, err
 	}
@@ -71,6 +87,7 @@ type CreateRouteInput struct {
 	LogResponses *bool   `json:"log_responses,omitempty"`
 	Priority     *int    `json:"priority,omitempty"`
 	IsActive     *bool   `json:"is_active,omitempty"`
+	TeamID       int     `json:"team_id"`
 }
 
 func CreateRoute(ctx context.Context, in CreateRouteInput) (*models.ModelRoute, error) {
@@ -100,11 +117,11 @@ func CreateRoute(ctx context.Context, in CreateRouteInput) (*models.ModelRoute, 
 	err := mustHavePool().QueryRow(ctx, `
 		INSERT INTO model_route (
 			model_pattern, route_type, provider_id, target_model,
-			timeout, log_requests, log_responses, priority, is_active
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+			timeout, log_requests, log_responses, priority, is_active, team_id
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
 		RETURNING id`,
 		in.ModelPattern, in.RouteType, in.ProviderID, in.TargetModel,
-		timeout, logReq, logResp, prio, active).Scan(&newID)
+		timeout, logReq, logResp, prio, active, in.TeamID).Scan(&newID)
 	if err != nil {
 		return nil, err
 	}
@@ -123,6 +140,8 @@ type UpdateRouteInput struct {
 	LogResponses  *bool   `json:"log_responses,omitempty"`
 	Priority      *int    `json:"priority,omitempty"`
 	IsActive      *bool   `json:"is_active,omitempty"`
+	// 可选：不传则保持原归属（不能像其他字段那样直接覆盖成 NULL）
+	TeamID *int `json:"team_id,omitempty"`
 }
 
 func UpdateRoute(ctx context.Context, id int, in UpdateRouteInput) (*models.ModelRoute, error) {
@@ -131,10 +150,10 @@ func UpdateRoute(ctx context.Context, id int, in UpdateRouteInput) (*models.Mode
 		UPDATE model_route SET
 			model_pattern = $2, route_type = $3, provider_id = $4, target_model = $5,
 			timeout = $6, log_requests = $7, log_responses = $8, priority = $9,
-			is_active = $10, update_time = CURRENT_TIMESTAMP
+			is_active = $10, team_id = COALESCE($11, team_id), update_time = CURRENT_TIMESTAMP
 		WHERE id = $1`,
 		id, in.ModelPattern, in.RouteType, in.ProviderID, in.TargetModel,
-		in.Timeout, in.LogRequests, in.LogResponses, in.Priority, in.IsActive)
+		in.Timeout, in.LogRequests, in.LogResponses, in.Priority, in.IsActive, in.TeamID)
 	if err != nil {
 		return nil, err
 	}
@@ -170,6 +189,7 @@ func scanRoute(row rowScanner) (*models.ModelRoute, error) {
 	err := row.Scan(
 		&r.ID, &r.ModelPattern, &r.RouteType, &r.ProviderID, &r.TargetModel,
 		&r.Timeout, &r.LogRequests, &r.LogResponses, &r.Priority, &r.IsActive,
+		&r.TeamID, &r.TeamName,
 		&r.CreateTime, &r.UpdateTime,
 		&r.OpenAIBaseURL, &r.AnthropicBaseURL, &r.ResponsesBaseURL, &r.APIKey, &r.ProviderName,
 	)
@@ -194,6 +214,7 @@ func scanRoutes(rows interface {
 		if err := rows.Scan(
 			&r.ID, &r.ModelPattern, &r.RouteType, &r.ProviderID, &r.TargetModel,
 			&r.Timeout, &r.LogRequests, &r.LogResponses, &r.Priority, &r.IsActive,
+			&r.TeamID, &r.TeamName,
 			&r.CreateTime, &r.UpdateTime,
 			&r.OpenAIBaseURL, &r.AnthropicBaseURL, &r.ResponsesBaseURL, &r.APIKey, &r.ProviderName,
 		); err != nil {

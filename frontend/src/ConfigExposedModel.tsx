@@ -11,7 +11,8 @@ export type ExposedModelRecord = {
   model_id: string
   owned_by: string
   is_active: boolean
-  team_id: number | null
+  /** 每个模型必须归属一个团队，不再有「全局可见」 */
+  team_id: number
   team_name: string
   last_openai_test_time: string | null
   last_anthropic_test_time: string | null
@@ -36,6 +37,9 @@ type TestResult = {
 
 const { Text, Paragraph } = Typography
 
+/** 每页条数。翻页定位依赖它，抽成常量避免两处写死不同步。 */
+const PAGE_SIZE = 10
+
 /** Run a single model test and return the result (no side-effects on React state). */
 async function runSingleTest(
   record: ExposedModelRecord,
@@ -45,9 +49,12 @@ async function runSingleTest(
   const isAnthropic = protocol === 'anthropic'
   // Use admin-only test endpoints (JWT auth) instead of /v1/ (API key auth)
   const endpoint = isAnthropic ? '/api/test/messages' : '/api/test/chat'
+  // 带上 team_id：路由按团队隔离，root 测试别的团队的模型时得指明按哪个团队的
+  // 路由去匹配，否则会用自己的团队去查、匹配不到。
+  const payload = { model: modelId, team_id: record.team_id, messages: [{ role: 'user', content: 'Hi' }] }
   const body = isAnthropic
-    ? JSON.stringify({ model: modelId, messages: [{ role: 'user', content: 'Hi' }], max_tokens: 20 })
-    : JSON.stringify({ model: modelId, messages: [{ role: 'user', content: 'Hi' }] })
+    ? JSON.stringify({ ...payload, max_tokens: 20 })
+    : JSON.stringify(payload)
 
   const start = performance.now()
   try {
@@ -142,6 +149,11 @@ const ConfigExposedModel = () => {
   const [editingRecord, setEditingRecord] = useState<ExposedModelRecord | null>(null)
   const [form] = Form.useForm()
 
+  // 分页受控：新增/编辑后跳到目标记录所在页，否则新记录落在最后一页、看起来像没保存成功
+  const [currentPage, setCurrentPage] = useState(1)
+  const [highlightId, setHighlightId] = useState<number | null>(null)
+  const highlightTimer = useRef<number | undefined>(undefined)
+
   // Single test state
   const [testModalOpen, setTestModalOpen] = useState(false)
   const [testing, setTesting] = useState(false)
@@ -155,12 +167,18 @@ const ConfigExposedModel = () => {
   const [batchProgress, setBatchProgress] = useState({ done: 0, total: 0 })
   const batchRunningRef = useRef(false)
 
-  const fetchData = async (signal?: AbortSignal) => {
+  const fetchData = async (signal?: AbortSignal): Promise<ExposedModelRecord[]> => {
     setLoading(true)
     try {
       const res = await apiFetch('/api/exposed_model', signal ? { signal } : undefined)
       const json = await res.json()
-      if (json.success) setData(json.data || [])
+      if (json.success) {
+        const list: ExposedModelRecord[] = json.data || []
+        setData(list)
+        // 删除后当前页可能已经越界，夹回最后一页
+        setCurrentPage((p) => Math.min(p, Math.max(1, Math.ceil(list.length / PAGE_SIZE))))
+        return list
+      }
     } catch (e) {
       if (e instanceof Error && e.name !== 'AbortError') {
         message.error('获取模型列表失败')
@@ -168,6 +186,17 @@ const ConfigExposedModel = () => {
     } finally {
       setLoading(false)
     }
+    return []
+  }
+
+  /** 翻到记录所在页并高亮几秒，用于新增/编辑后告诉用户「它在哪」。 */
+  const revealRecord = (id: number, list: ExposedModelRecord[]) => {
+    const idx = list.findIndex((m) => m.id === id)
+    if (idx < 0) return
+    setCurrentPage(Math.floor(idx / PAGE_SIZE) + 1)
+    setHighlightId(id)
+    window.clearTimeout(highlightTimer.current)
+    highlightTimer.current = window.setTimeout(() => setHighlightId(null), 3000)
   }
 
   useEffect(() => {
@@ -179,7 +208,10 @@ const ConfigExposedModel = () => {
         if (d.success) setTeams(d.data || [])
       }).catch(() => {})
     }
-    return () => controller.abort()
+    return () => {
+      controller.abort()
+      window.clearTimeout(highlightTimer.current)
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -245,7 +277,9 @@ const ConfigExposedModel = () => {
       if (json.success) {
         message.success('保存成功')
         setModalVisible(false)
-        void fetchData()
+        const savedId: number | undefined = isEdit ? editingRecord?.id : json.data?.id
+        const list = await fetchData()
+        if (savedId != null) revealRecord(savedId, list)
       } else {
         message.error('保存失败: ' + json.message)
       }
@@ -365,8 +399,9 @@ const ConfigExposedModel = () => {
       title: '所属团队',
       dataIndex: 'team_name',
       width: 130,
-      render: (name: string, record: ExposedModelRecord) =>
-        record.team_id ? <Tag color="purple">{name || `团队 #${record.team_id}`}</Tag> : <Tag color="default">全局</Tag>,
+      render: (name: string, record: ExposedModelRecord) => (
+        <Tag color="purple">{name || `团队 #${record.team_id}`}</Tag>
+      ),
     },
     {
       title: '状态',
@@ -504,8 +539,13 @@ const ConfigExposedModel = () => {
         dataSource={data}
         rowKey="id"
         loading={loading}
-        pagination={{ pageSize: 10 }}
+        pagination={{ pageSize: PAGE_SIZE, current: currentPage, onChange: setCurrentPage }}
         size="middle"
+        onRow={(record) =>
+          record.id === highlightId
+            ? { style: { background: token.colorPrimaryBg, transition: 'background 0.4s' } }
+            : {}
+        }
       />
 
       <Modal
@@ -522,10 +562,14 @@ const ConfigExposedModel = () => {
           <Form.Item name="owned_by" label="Owned By" rules={[{ required: true }]}>
             <Input placeholder="如: organization, openai" />
           </Form.Item>
-          <Form.Item name="team_id" label="所属团队" tooltip="留空 = 全局可见，所有团队都能使用">
+          <Form.Item
+            name="team_id"
+            label="所属团队"
+            tooltip="模型只对所属团队可见、可调用"
+            rules={[{ required: true, message: '请选择所属团队' }]}
+          >
             <Select
-              allowClear
-              placeholder="选择团队（留空为全局）"
+              placeholder="选择团队"
               options={teams.map((t) => ({ value: t.id, label: t.name }))}
             />
           </Form.Item>

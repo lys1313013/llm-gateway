@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -128,10 +129,20 @@ func ListRoutes(c *gin.Context) {
 	if c.IsAborted() {
 		return
 	}
-	xs, err := db.GetRoutes(c.Request.Context())
+	// root 是平台管理员，看全量；其他角色只看自己团队的路由。
+	var xs []models.ModelRoute
+	var err error
+	if middleware.GetUserRole(c) == 1 {
+		xs, err = db.GetAllRoutes(c.Request.Context())
+	} else if teamID := middleware.GetTeamID(c); teamID != nil {
+		xs, err = db.GetRoutes(c.Request.Context(), *teamID)
+	}
 	if err != nil {
 		serverError(c, err)
 		return
+	}
+	if xs == nil {
+		xs = []models.ModelRoute{}
 	}
 	ok(c, xs)
 }
@@ -151,6 +162,10 @@ func GetRoute(c *gin.Context) {
 		serverError(c, err)
 		return
 	}
+	if !canAccessTeam(c, r.TeamID) {
+		forbidden(c, "该路由不属于你的团队")
+		return
+	}
 	ok(c, r)
 }
 
@@ -163,6 +178,11 @@ func CreateRoute(c *gin.Context) {
 	if !bindJSON(c, &in) {
 		return
 	}
+	teamID, proceed := resolveTargetTeam(c, in.TeamID)
+	if !proceed {
+		return
+	}
+	in.TeamID = teamID
 	r, err := db.CreateRoute(c.Request.Context(), in)
 	if err != nil {
 		serverError(c, err)
@@ -177,8 +197,33 @@ func UpdateRoute(c *gin.Context) {
 		return
 	}
 	id, _ := strconv.Atoi(c.Param("id"))
+	existing, err := db.GetRoute(c.Request.Context(), id)
+	if errors.Is(err, db.ErrNotFound) || existing == nil {
+		notFound(c, "Not found")
+		return
+	}
+	if err != nil {
+		serverError(c, err)
+		return
+	}
+	if !canAccessTeam(c, existing.TeamID) {
+		forbidden(c, "该路由不属于你的团队")
+		return
+	}
 	var in db.UpdateRouteInput
 	if !bindJSON(c, &in) {
+		return
+	}
+	if middleware.GetUserRole(c) != 1 {
+		// 非 root 不能把路由挪走。请求体里写了别的团队就直接拒，而不是静默改写
+		// —— 静默改写会让调用方以为迁移成功了。
+		if in.TeamID != nil && *in.TeamID != existing.TeamID {
+			forbidden(c, "只能把路由保留在本团队")
+			return
+		}
+		in.TeamID = nil
+	} else if in.TeamID != nil && *in.TeamID <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "team_id 必须是正整数"})
 		return
 	}
 	r, err := db.UpdateRoute(c.Request.Context(), id, in)
@@ -195,6 +240,19 @@ func DeleteRoute(c *gin.Context) {
 		return
 	}
 	id, _ := strconv.Atoi(c.Param("id"))
+	r, err := db.GetRoute(c.Request.Context(), id)
+	if errors.Is(err, db.ErrNotFound) || r == nil {
+		notFound(c, "Not found")
+		return
+	}
+	if err != nil {
+		serverError(c, err)
+		return
+	}
+	if !canAccessTeam(c, r.TeamID) {
+		forbidden(c, "该路由不属于你的团队")
+		return
+	}
 	if err := db.DeleteRoute(c.Request.Context(), id); err != nil {
 		serverError(c, err)
 		return
@@ -210,7 +268,8 @@ func ListExposedModels(c *gin.Context) {
 	var xs []models.ExposedModel
 	var err error
 	if middleware.GetUserRole(c) == 1 {
-		xs, err = db.GetExposedModels(c.Request.Context())
+		// root 也走带 team 的查询，否则前端拿不到 team_name，只能显示「团队 #id」
+		xs, err = db.GetAllExposedModelsWithTeam(c.Request.Context())
 	} else {
 		teamID := middleware.GetTeamID(c)
 		xs, err = db.GetExposedModelsForTeam(c.Request.Context(), teamID)
@@ -226,6 +285,10 @@ func ListExposedModels(c *gin.Context) {
 }
 
 func GetExposedModel(c *gin.Context) {
+	middleware.RequireAdmin(c)
+	if c.IsAborted() {
+		return
+	}
 	id, _ := strconv.Atoi(c.Param("id"))
 	m, err := db.GetExposedModel(c.Request.Context(), id)
 	if errors.Is(err, db.ErrNotFound) || m == nil {
@@ -234,6 +297,10 @@ func GetExposedModel(c *gin.Context) {
 	}
 	if err != nil {
 		serverError(c, err)
+		return
+	}
+	if !canAccessTeam(c, m.TeamID) {
+		forbidden(c, "该模型不属于你的团队")
 		return
 	}
 	ok(c, m)
@@ -248,10 +315,24 @@ func CreateExposedModel(c *gin.Context) {
 	if !bindJSON(c, &in) {
 		return
 	}
-	if existing, _ := db.GetExposedModelByName(c.Request.Context(), in.ModelID); existing != nil {
+	teamID, proceed := resolveTargetTeam(c, in.TeamID)
+	if !proceed {
+		return
+	}
+	in.TeamID = teamID
+	// 唯一性是 (model_id, team_id)：同名模型别的团队可以各自登记一条，所以
+	// 查重必须带上团队，否则会把合法请求误判成 409。
+	if existing, _ := db.GetExposedModelByNameAndTeam(c.Request.Context(), in.ModelID, teamID); existing != nil {
+		// 报错要说清那条记录在哪。列表按团队过滤、按 id 升序分页，新记录可能
+		// 落在后面的页码上；只说「已存在」会让人在自己的列表里白找。
+		state := "启用中"
+		if !existing.IsActive {
+			state = "已停用"
+		}
 		c.JSON(http.StatusConflict, gin.H{
 			"success": false,
-			"message": "model_id '" + in.ModelID + "' 已存在，不能重复添加",
+			"message": "model_id '" + in.ModelID + "' 在本团队已存在（ID " + strconv.Itoa(existing.ID) + "，" +
+				teamLabel(c.Request.Context(), teamID) + "，" + state + "），不能重复添加",
 		})
 		return
 	}
@@ -269,9 +350,53 @@ func UpdateExposedModel(c *gin.Context) {
 		return
 	}
 	id, _ := strconv.Atoi(c.Param("id"))
+	existing, err := db.GetExposedModel(c.Request.Context(), id)
+	if errors.Is(err, db.ErrNotFound) || existing == nil {
+		notFound(c, "Not found")
+		return
+	}
+	if err != nil {
+		serverError(c, err)
+		return
+	}
+	if !canAccessTeam(c, existing.TeamID) {
+		forbidden(c, "该模型不属于你的团队")
+		return
+	}
 	var in db.UpdateExposedModelInput
 	if !bindJSON(c, &in) {
 		return
+	}
+	// 目标团队：请求体指定则迁移过去（root 用来跨团队搬记录），否则原地不动。
+	// 未提供的字段由 db 层的 COALESCE 兜住，不会被清空。
+	targetTeam := existing.TeamID
+	if in.TeamID != nil {
+		if *in.TeamID <= 0 {
+			c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "team_id 必须是正整数"})
+			return
+		}
+		if !canAccessTeam(c, *in.TeamID) {
+			forbidden(c, "只能把模型保留在本团队")
+			return
+		}
+		targetTeam = *in.TeamID
+	}
+	if in.ModelID != nil {
+		if *in.ModelID == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "model_id 不能为空"})
+			return
+		}
+		// 改 model_id 也要查重，否则撞唯一索引会返回裸 500（SQLSTATE 23505）
+		if *in.ModelID != existing.ModelID {
+			if dup, _ := db.GetExposedModelByNameAndTeam(c.Request.Context(), *in.ModelID, targetTeam); dup != nil {
+				c.JSON(http.StatusConflict, gin.H{
+					"success": false,
+					"message": "model_id '" + *in.ModelID + "' 在" + teamLabel(c.Request.Context(), targetTeam) +
+						" 已存在（ID " + strconv.Itoa(dup.ID) + "），不能重复",
+				})
+				return
+			}
+		}
 	}
 	m, err := db.UpdateExposedModel(c.Request.Context(), id, in)
 	if err != nil {
@@ -287,6 +412,19 @@ func DeleteExposedModel(c *gin.Context) {
 		return
 	}
 	id, _ := strconv.Atoi(c.Param("id"))
+	m, err := db.GetExposedModel(c.Request.Context(), id)
+	if errors.Is(err, db.ErrNotFound) || m == nil {
+		notFound(c, "Not found")
+		return
+	}
+	if err != nil {
+		serverError(c, err)
+		return
+	}
+	if !canAccessTeam(c, m.TeamID) {
+		forbidden(c, "该模型不属于你的团队")
+		return
+	}
 	if err := db.DeleteExposedModel(c.Request.Context(), id); err != nil {
 		serverError(c, err)
 		return
@@ -300,6 +438,19 @@ func UpdateExposedModelTestTime(c *gin.Context) {
 		return
 	}
 	id, _ := strconv.Atoi(c.Param("id"))
+	existing, err := db.GetExposedModel(c.Request.Context(), id)
+	if errors.Is(err, db.ErrNotFound) || existing == nil {
+		notFound(c, "Not found")
+		return
+	}
+	if err != nil {
+		serverError(c, err)
+		return
+	}
+	if !canAccessTeam(c, existing.TeamID) {
+		forbidden(c, "该模型不属于你的团队")
+		return
+	}
 	var in struct {
 		Protocol string `json:"protocol"`
 		Status   string `json:"status"`
@@ -771,6 +922,21 @@ func DeleteTeam(c *gin.Context) {
 		return
 	}
 	id, _ := strconv.Atoi(c.Param("id"))
+	// 预检：exposed_model / model_route 的外键是 ON DELETE RESTRICT，直接删会
+	// 撞 23503 并把裸的 PG 报错透给前端。这里先数一下，给一个能直接行动的提示。
+	modelsCount, routesCount, err := db.TeamResourceCounts(c.Request.Context(), id)
+	if err != nil {
+		serverError(c, err)
+		return
+	}
+	if modelsCount > 0 || routesCount > 0 {
+		c.JSON(http.StatusConflict, gin.H{
+			"success": false,
+			"message": "该团队下还有 " + strconv.Itoa(modelsCount) + " 个模型、" + strconv.Itoa(routesCount) +
+				" 条路由，不能删除。请先删除或转移到其他团队。",
+		})
+		return
+	}
 	if err := db.DeleteTeam(c.Request.Context(), id); err != nil {
 		serverError(c, err)
 		return
@@ -832,6 +998,49 @@ func ok(c *gin.Context, data any) {
 
 func notFound(c *gin.Context, msg string) {
 	c.JSON(http.StatusNotFound, gin.H{"success": false, "message": msg})
+}
+
+func forbidden(c *gin.Context, msg string) {
+	c.JSON(http.StatusForbidden, gin.H{"success": false, "message": msg})
+}
+
+// canAccessTeam 判定调用者能否操作归属 teamID 的记录。root 是平台管理员，可以
+// 操作任何团队；admin 只能碰自己团队的记录；没有团队的人碰不了任何记录。
+func canAccessTeam(c *gin.Context, teamID int) bool {
+	if middleware.GetUserRole(c) == 1 {
+		return true
+	}
+	own := middleware.GetTeamID(c)
+	return own != nil && *own == teamID
+}
+
+// resolveTargetTeam 决定新建记录归属哪个团队：root 必须显式指定（它是唯一能
+// 跨团队建档的角色），其他角色一律强制写自己团队 —— 请求体里的 team_id 被
+// 忽略，否则团队管理员能把记录塞进别的团队。
+//
+// 返回 false 表示已经写好响应，调用方直接 return。
+func resolveTargetTeam(c *gin.Context, requested int) (int, bool) {
+	if middleware.GetUserRole(c) == 1 {
+		if requested <= 0 {
+			c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "必须指定 team_id"})
+			return 0, false
+		}
+		return requested, true
+	}
+	own := middleware.GetTeamID(c)
+	if own == nil {
+		forbidden(c, "你尚未被分配到任何团队，无法创建该资源")
+		return 0, false
+	}
+	return *own, true
+}
+
+// teamLabel 给团队编号拼一个给人看的名字；查不到就退回 id，不返回空串。
+func teamLabel(ctx context.Context, teamID int) string {
+	if t, err := db.GetTeam(ctx, teamID); err == nil && t != nil && t.Name != "" {
+		return "团队 " + t.Name
+	}
+	return "团队 #" + strconv.Itoa(teamID)
 }
 
 func serverError(c *gin.Context, err error) {

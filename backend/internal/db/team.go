@@ -75,6 +75,17 @@ func DeleteTeam(ctx context.Context, id int) error {
 	return nil
 }
 
+// TeamResourceCounts 是删除团队前的预检。RESTRICT 外键确实会拦住删除，但
+// Postgres 抛出来的是裸的 23503，前端只能显示一串英文；先数一下才能拼出
+// 「还有 N 个模型、M 条路由」这种能直接行动的提示。
+func TeamResourceCounts(ctx context.Context, id int) (modelsCount, routesCount int, err error) {
+	err = mustHavePool().QueryRow(ctx, `
+		SELECT (SELECT COUNT(*) FROM exposed_model WHERE team_id = $1),
+		       (SELECT COUNT(*) FROM model_route  WHERE team_id = $1)`, id).
+		Scan(&modelsCount, &routesCount)
+	return modelsCount, routesCount, err
+}
+
 // ---------------------------------------------------------------------------
 // Scanners
 // ---------------------------------------------------------------------------

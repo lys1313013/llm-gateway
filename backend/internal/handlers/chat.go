@@ -39,14 +39,9 @@ func resolveSessionID(c *gin.Context) string {
 // ---------------------------------------------------------------------------
 
 func ListModels(c *gin.Context) {
-	var modelRecords []gatewaymodels.ExposedModel
-	var err error
-	if middleware.GetUserRole(c) == 1 {
-		modelRecords, err = db.GetActiveExposedModels(c.Request.Context())
-	} else {
-		teamID := middleware.GetTeamID(c)
-		modelRecords, err = db.GetActiveExposedModelsForTeam(c.Request.Context(), teamID)
-	}
+	// 与转发前的授权闸门保持一致：列表里出现的就是你能调的。root 也不例外
+	// —— 它按自己所属团队过滤，没有全量视角。
+	modelRecords, err := db.GetActiveExposedModelsForTeam(c.Request.Context(), middleware.GetTeamID(c))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": gin.H{"message": err.Error()}})
 		return
@@ -61,6 +56,52 @@ func ListModels(c *gin.Context) {
 		})
 	}
 	c.JSON(http.StatusOK, gin.H{"object": "list", "data": data})
+}
+
+// ---------------------------------------------------------------------------
+// 转发前授权
+// ---------------------------------------------------------------------------
+
+// requireModelAccess 是转发入口的真授权闸门：模型必须出现在调用者所属团队的
+// exposed_model 清单里且 is_active。没有"全局模型"，root 也不豁免 —— root 按
+// 自己所属团队校验，未分配团队的用户一律拒绝。
+//
+// 位置在模型名提取之后、match*Route 之前：先授权再路由，未授权的模型不该
+// 从错误码里泄漏"上游到底有没有配这条路由"。
+func requireModelAccess(c *gin.Context, model, protocol string) bool {
+	fail := func(status int, typ, msg string) bool {
+		if protocol == "anthropic" {
+			c.JSON(status, gin.H{"type": "error", "error": gin.H{"type": typ, "message": msg}})
+		} else {
+			c.JSON(status, gin.H{"error": gin.H{"type": typ, "message": msg}})
+		}
+		return false
+	}
+
+	teamID := middleware.GetTeamID(c)
+	if teamID == nil {
+		return fail(http.StatusForbidden, "permission_error",
+			fmt.Sprintf("Model '%s' is not available: this account is not assigned to any team", model))
+	}
+	ok, err := db.IsModelExposedToTeam(c.Request.Context(), model, *teamID)
+	if err != nil {
+		slog.Error("model access check", "err", err, "model", model)
+		return fail(http.StatusInternalServerError, "internal_server_error", err.Error())
+	}
+	if !ok {
+		return fail(http.StatusForbidden, "permission_error",
+			fmt.Sprintf("Model '%s' is not available to your team", model))
+	}
+	return true
+}
+
+// routeTeamID 取调用者团队 id。闸门已保证走到这里的人有团队；万一没有，返回
+// 0 —— 没有任何路由归属 0 团队，结果是无匹配（404），不会退化成"全局路由"。
+func routeTeamID(c *gin.Context) int {
+	if id := middleware.GetTeamID(c); id != nil {
+		return *id
+	}
+	return 0
 }
 
 // ---------------------------------------------------------------------------
@@ -88,6 +129,10 @@ func ChatCompletions(c *gin.Context) {
 	if slog.Default().Enabled(c.Request.Context(), slog.LevelInfo) {
 		headers := collectHeaders(c.Request.Header)
 		slog.Info("chat: received", "headers", headers, "body", string(body))
+	}
+
+	if !requireModelAccess(c, model, "openai") {
+		return
 	}
 
 	route := matchOpenAIRoute(c, model)
@@ -190,7 +235,7 @@ func writeStream(c *gin.Context, status int, headers http.Header, body io.ReadCl
 }
 
 func matchOpenAIRoute(c *gin.Context, model string) *gatewaymodels.ModelRoute {
-	routes, err := db.GetActiveRoutes(c.Request.Context())
+	routes, err := db.GetActiveRoutes(c.Request.Context(), routeTeamID(c))
 	if err != nil {
 		slog.Error("get active routes", "err", err)
 		return nil
@@ -275,6 +320,10 @@ func AnthropicMessages(c *gin.Context) {
 	}
 	model, _ := data["model"].(string)
 
+	if !requireModelAccess(c, model, "anthropic") {
+		return
+	}
+
 	route := matchAnthropicRoute(c, model)
 	if route == nil {
 		c.JSON(http.StatusNotFound, gin.H{
@@ -330,7 +379,7 @@ func AnthropicMessages(c *gin.Context) {
 }
 
 func matchAnthropicRoute(c *gin.Context, model string) *gatewaymodels.ModelRoute {
-	routes, err := db.GetActiveRoutes(c.Request.Context())
+	routes, err := db.GetActiveRoutes(c.Request.Context(), routeTeamID(c))
 	if err != nil {
 		slog.Error("get active routes", "err", err)
 		return nil
@@ -381,6 +430,10 @@ func Responses(c *gin.Context) {
 	if slog.Default().Enabled(c.Request.Context(), slog.LevelInfo) {
 		headers := collectHeaders(c.Request.Header)
 		slog.Info("responses: received", "headers", headers, "body", string(body))
+	}
+
+	if !requireModelAccess(c, model, "responses") {
+		return
 	}
 
 	route := matchResponsesRoute(c, model)
@@ -442,7 +495,7 @@ func Responses(c *gin.Context) {
 }
 
 func matchResponsesRoute(c *gin.Context, model string) *gatewaymodels.ModelRoute {
-	routes, err := db.GetActiveRoutes(c.Request.Context())
+	routes, err := db.GetActiveRoutes(c.Request.Context(), routeTeamID(c))
 	if err != nil {
 		slog.Error("get active routes", "err", err)
 		return nil

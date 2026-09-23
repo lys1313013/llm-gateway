@@ -618,10 +618,10 @@ func GetLogsBySession(ctx context.Context, sessionID string, limit, offset int) 
 		       processing_time_ms, prompt_tokens, completion_tokens, total_tokens,
 		       target_url,
 		       error_message, protocol,
-		       usage_data, cache_creation_input_tokens, cache_read_input_tokens,,
-		       last_message_preview
+		       usage_data, cache_creation_input_tokens, cache_read_input_tokens,
 		       session_id,
-		       user_id
+		       user_id,
+		       last_message_preview
 		FROM api_logs
 		WHERE session_id = $1
 		ORDER BY id ASC

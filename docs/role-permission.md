@@ -62,24 +62,39 @@
 
 ### Model Route 管理
 
+路由归属团队，**没有公共路由**。非 Root 的读写都被限制在自己团队内。
+
 | 接口 | 普通用户 | 管理员 | Root |
 |------|:--:|:--:|:--:|
-| `GET /api/route` | ✅ | ✅ | ✅ |
-| `GET /api/route/:id` | ✅ | ✅ | ✅ |
-| `POST /api/route` | ❌ | ✅ | ✅ |
-| `PUT /api/route/:id` | ❌ | ✅ | ✅ |
-| `DELETE /api/route/:id` | ❌ | ✅ | ✅ |
+| `GET /api/route` | ❌ | ✅（本团队） | ✅（全部） |
+| `GET /api/route/:id` | ❌ | ✅（本团队） | ✅（全部） |
+| `POST /api/route` | ❌ | ✅（强制本团队） | ✅（须显式指定 `team_id`） |
+| `PUT /api/route/:id` | ❌ | ✅（本团队，不能改归属） | ✅（可改 `team_id`） |
+| `DELETE /api/route/:id` | ❌ | ✅（本团队） | ✅（全部） |
 
 ### Exposed Model 管理
 
 | 接口 | 普通用户 | 管理员 | Root |
 |------|:--:|:--:|:--:|
-| `GET /api/exposed_model` | ✅ | ✅ | ✅ |
-| `GET /api/exposed_model/:id` | ✅ | ✅ | ✅ |
-| `POST /api/exposed_model` | ❌ | ✅ | ✅ |
-| `PUT /api/exposed_model/:id` | ❌ | ✅ | ✅ |
-| `DELETE /api/exposed_model/:id` | ❌ | ✅ | ✅ |
-| `PUT /api/exposed_model/:id/test_time` | ❌ | ✅ | ✅ |
+| `GET /api/exposed_model` | ❌ | ✅（本团队） | ✅（全部，带 `team_name`） |
+| `GET /api/exposed_model/:id` | ❌ | ✅（本团队） | ✅（全部） |
+| `POST /api/exposed_model` | ❌ | ✅（强制本团队） | ✅（须显式指定 `team_id`） |
+| `PUT /api/exposed_model/:id` | ❌ | ✅（本团队，不能改归属） | ✅（可改 `team_id`） |
+| `DELETE /api/exposed_model/:id` | ❌ | ✅（本团队） | ✅（全部） |
+| `PUT /api/exposed_model/:id/test_time` | ❌ | ✅（本团队） | ✅（全部） |
+
+### 多租户（团队）维度
+
+`exposed_model` 与 `model_route` 都必须归属某个团队（`team_id NOT NULL`），不存在「全局可见」的记录。
+
+- **唯一性**：`(model_id, team_id)` 复合唯一 —— 不同团队可以各自登记同名模型；同团队内重复返回 409（错误信息带记录 ID / 团队 / 状态，便于定位）
+- **Root 也是团队的一员**：管理接口里 Root 有全量视角（可以看/改所有团队），但**转发时按自己所属团队校验**，没有豁免
+- **未分配团队的用户**：模型列表为空，管理接口只能建出 403，`/v1/*` 一律拒绝
+- **删除团队**：名下还有模型或路由时返回 409 + 可读文案（外键 `ON DELETE RESTRICT`）
+- **转发前授权闸门**：`/v1/chat/completions`、`/v1/messages`、`/v1/responses` 在匹配路由**之前**校验模型是否在调用者团队的 `exposed_model` 清单中且启用，否则 403（不是 404）。`GET /v1/models` 与闸门同一视角：列表里出现的就是你能调的
+- **`/api/test/*` 不加闸门**：管理页的连通性测试要能测任意团队的模型；请求体里的 `team_id` 决定按哪个团队的路由匹配，缺省回落到调用者自己的团队
+- **已知不一致**：`/api/*` 的 team 取自 JWT claim，`/v1/*` 每次从库里读 `users.team_id`。改了用户的团队归属后，重新登录前这两条路径的判定会不同
+- **本次未做**：`/api/logs`、`/api/stats/*` 对 role > 2 只按 `user_id` 过滤，团队管理员仍能看到所有团队的流量
 
 ### 日志与会话
 
