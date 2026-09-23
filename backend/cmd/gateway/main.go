@@ -10,6 +10,7 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -30,6 +31,10 @@ import (
 var version = "dev"
 
 func main() {
+	// 起点早于 logger（logger 还没装配，打不出来）。startup_ms 报的是这段
+	// 到实际可 accept 为止的墙钟时间，容器起 → 第一行日志那段黑盒靠它暴露。
+	bootStart := time.Now()
+
 	versionFlag := flag.Bool("version", false, "print version and exit")
 	flag.Parse()
 	if *versionFlag {
@@ -88,10 +93,23 @@ func main() {
 		ReadHeaderTimeout: 30 * time.Second,
 	}
 
+	// 先同步 bind 再交给 goroutine，两个原因：
+	// 一是 startup_ms 要打在实际能 accept 之后，写在 goroutine 里会报成
+	// 「刚要 listen」而不是「已经 listen 上」；二是端口被占时能在 main 里
+	// 直接非 0 退出——原来的写法是 goroutine 里 cancel ctx，主流程走正常
+	// 关闭路径 exit 0，面板显示「正常退出」，看不出是根本没起来。
+	ln, err := net.Listen("tcp", srv.Addr)
+	if err != nil {
+		slog.Error("listen", "addr", srv.Addr, "err", err)
+		os.Exit(1)
+	}
+	slog.Info("listening",
+		"port", cfg.HTTPPort,
+		"startup_ms", time.Since(bootStart).Milliseconds())
+
 	go func() {
-		slog.Info("listening", "port", cfg.HTTPPort)
-		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			slog.Error("listen", "err", err)
+		if err := srv.Serve(ln); err != nil && err != http.ErrServerClosed {
+			slog.Error("serve", "err", err)
 			cancel()
 		}
 	}()

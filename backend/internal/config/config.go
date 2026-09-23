@@ -19,6 +19,10 @@ type Config struct {
 	DBPassword string
 	DBTimezone string
 	JWTSecret  string
+	// DBConnectTimeoutS 是 db.Init 等待 postgres 就绪的总预算（秒）。backend
+	// 与 postgres 在不同 compose 文件里、没有 depends_on，冷启动时 backend
+	// 常先起来，靠这个窗口等 DB 而不必崩掉重启。0 = 不重试。
+	DBConnectTimeoutS int
 	// JWTExpirationH 是登录 token 的有效期（小时），通过环境变量
 	JWTExpirationH int
 	LogLevel       string
@@ -37,17 +41,18 @@ func Load() *Config {
 	_ = godotenv.Load()
 
 	cfg = &Config{
-		HTTPPort:         getEnvInt("PORT", 5002),
-		DBHost:           getEnv("DB_HOST", "localhost"),
-		DBPort:           getEnv("DB_PORT", "5432"),
-		DBName:           getEnv("DB_NAME", "llm_gateway"),
-		DBUser:           getEnv("DB_USER", "postgres"),
-		DBPassword:       getEnv("DB_PASSWORD", "password"),
-		DBTimezone:       getEnvTZ("DB_TIMEZONE", "Asia/Shanghai"),
-		JWTSecret:        getEnv("JWT_SECRET_KEY", "dev-secret-key-change-in-production"),
-		JWTExpirationH:   getEnvInt("JWT_EXPIRATION_HOURS", 168),
-		LogLevel:         getEnv("LOG_LEVEL", "info"),
-		SessionIDHeaders: getEnvCSV("SESSION_ID_HEADERS", []string{"X-Claude-Code-Session-Id"}),
+		HTTPPort:          getEnvInt("PORT", 5002),
+		DBHost:            getEnv("DB_HOST", "localhost"),
+		DBPort:            getEnv("DB_PORT", "5432"),
+		DBName:            getEnv("DB_NAME", "llm_gateway"),
+		DBUser:            getEnv("DB_USER", "postgres"),
+		DBPassword:        getEnv("DB_PASSWORD", "password"),
+		DBTimezone:        getEnvTZ("DB_TIMEZONE", "Asia/Shanghai"),
+		DBConnectTimeoutS: getEnvInt("DB_CONNECT_TIMEOUT", 60),
+		JWTSecret:         getEnv("JWT_SECRET_KEY", "dev-secret-key-change-in-production"),
+		JWTExpirationH:    getEnvInt("JWT_EXPIRATION_HOURS", 168),
+		LogLevel:          getEnv("LOG_LEVEL", "info"),
+		SessionIDHeaders:  getEnvCSV("SESSION_ID_HEADERS", []string{"X-Claude-Code-Session-Id"}),
 	}
 	return cfg
 }

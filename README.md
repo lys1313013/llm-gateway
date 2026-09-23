@@ -228,10 +228,15 @@ print(msg.content[0].text)
 |------|--------|------|
 | `DB_HOST` | `localhost` | 数据库主机 |
 | `DB_PORT` | `5432` | 数据库端口 |
-| `DB_NAME` | `mock_openai` | 数据库名 |
+| `DB_NAME` | `llm_gateway` | 数据库名 |
 | `DB_USER` | `postgres` | 用户名 |
 | `DB_PASSWORD` | `password` | 密码 |
 | `DB_TIMEZONE` | `Asia/Shanghai` | 时区（用于按小时统计） |
+| `DB_CONNECT_TIMEOUT` | `60` | 启动时等待数据库就绪的总秒数，每 2 秒重试一次；`0` = 不重试 |
+
+> `DB_CONNECT_TIMEOUT` 是为冷启动准备的：backend 与 postgres 在不同 compose 文件里、
+> 没有 `depends_on`，机器重启后 backend 常先起来。等不到就在预算耗尽后非 0 退出，
+> 交给 `restart: always` 重启。
 
 ---
 

@@ -25,12 +25,20 @@ import (
 // Pool is the global pgx connection pool.
 var Pool *pgxpool.Pool
 
+// 等 DB 就绪的节奏：单次 Ping 的上限，以及两次重试之间的间隔。总预算走
+// config.DBConnectTimeoutS（环境变量 DB_CONNECT_TIMEOUT，默认 60 秒）。
+const (
+	dbPingTimeout          = 5 * time.Second
+	dbConnectRetryInterval = 2 * time.Second
+)
+
 // Init opens the pool and creates tables. Safe to call multiple times.
 func Init(ctx context.Context) error {
 	c := config.Get()
 
 	cfg, err := pgxpool.ParseConfig(c.ConnInfo())
 	if err != nil {
+		// conninfo 写错了重试多少次都一样，不进重试循环。
 		return fmt.Errorf("parse conninfo: %w", err)
 	}
 	cfg.MaxConns = 10
@@ -38,21 +46,62 @@ func Init(ctx context.Context) error {
 	cfg.MaxConnLifetime = time.Hour
 	cfg.MaxConnIdleTime = 30 * time.Minute
 
+	// dial_ms 覆盖 NewWithConfig + 等 DB 就绪：生产上「容器起 → 第一行日志」
+	// 的延迟几乎全在这里（DNS/网络/DB 未就绪时的握手等待），拆出来才知道慢在哪段。
+	dialStart := time.Now()
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
 		return fmt.Errorf("connect db: %w", err)
 	}
 
-	pingCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
-	if err := pool.Ping(pingCtx); err != nil {
-		pool.Close()
-		return fmt.Errorf("ping db: %w", err)
+	// 重试等 DB 就绪。postgres 在 docker/docker-compose.db.yml 里，与 backend
+	// 不同 compose 文件、没有 depends_on，靠 restart: always 硬撑——机器重启或
+	// DB 升级时 backend 常先起来。原来单次 Ping（5s 超时）失败即退出，会变成
+	// 启动期崩溃循环，日志上看着像「启动慢」甚至「启动失败」。这里改成在
+	// DB_CONNECT_TIMEOUT 秒的预算内反复试；不可恢复的配置错误上面已经返回了。
+	budget := time.Duration(c.DBConnectTimeoutS) * time.Second
+	deadline := time.Now().Add(budget)
+	attempt := 0
+	for {
+		attempt++
+		pingCtx, cancel := context.WithTimeout(ctx, dbPingTimeout)
+		lastErr := pool.Ping(pingCtx)
+		cancel()
+		if lastErr == nil {
+			break
+		}
+		// 外部要求退出（SIGTERM）就别再等了，让 main 走正常关闭。
+		if ctx.Err() != nil {
+			pool.Close()
+			return fmt.Errorf("ping db: %w", ctx.Err())
+		}
+		// 下一次重试落在预算之外就放弃。每轮都会打 WARN，所以配置写错
+		// （比如 DB_HOST 拼错）时错误信息立刻可见，只是退出被推迟了。
+		if !time.Now().Add(dbConnectRetryInterval).Before(deadline) {
+			pool.Close()
+			return fmt.Errorf("ping db: gave up after %d attempts in %s: %w",
+				attempt, budget, lastErr)
+		}
+		slog.Warn("db not ready, retrying",
+			"attempt", attempt, "err", lastErr,
+			"retry_in_ms", dbConnectRetryInterval.Milliseconds())
+		select {
+		case <-ctx.Done():
+			pool.Close()
+			return fmt.Errorf("ping db: %w", ctx.Err())
+		case <-time.After(dbConnectRetryInterval):
+		}
 	}
 
 	Pool = pool
+	// 重试过就单独记一条：dial_ms 里含着等待，不说明白会以为是 DB 慢。
+	if attempt > 1 {
+		slog.Warn("db became ready after retries",
+			"attempts", attempt, "waited_ms", time.Since(dialStart).Milliseconds())
+	}
 	slog.Info("database connection pool initialised",
-		"max_conns", cfg.MaxConns, "min_conns", cfg.MinConns)
+		"max_conns", cfg.MaxConns, "min_conns", cfg.MinConns,
+		"dial_ms", time.Since(dialStart).Milliseconds())
 
 	return initSchema(ctx)
 }
@@ -66,6 +115,8 @@ func Close() {
 }
 
 func initSchema(ctx context.Context) error {
+	start := time.Now()
+
 	// 顺序有约束：被 REFERENCES 的表必须先建。team / users 排在最前，
 	// 因为 api_keys、api_logs 都在建表语句里直接引用它们——空库首次启动
 	// 时顺序错了会直接 `relation "users" does not exist` 退出。
@@ -304,7 +355,7 @@ func initSchema(ctx context.Context) error {
 		}
 	}
 
-	slog.Info("database schema initialised")
+	slog.Info("database schema initialised", "migrate_ms", time.Since(start).Milliseconds())
 	return nil
 }
 

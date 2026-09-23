@@ -23,6 +23,9 @@ services:
       DB_USER: ${DB_USER:-postgres}
       DB_PASSWORD: ${DB_PASSWORD:-password}
       DB_TIMEZONE: ${DB_TIMEZONE:-Asia/Shanghai}
+      # 等 postgres 就绪的总秒数。postgres 在 docker-compose.db.yml 里、与本文件
+      # 不同 project，没有 depends_on，冷启动时 backend 会先起来——靠这个窗口等。
+      DB_CONNECT_TIMEOUT: ${DB_CONNECT_TIMEOUT:-60}
       JWT_SECRET_KEY: ${JWT_SECRET_KEY:-change-me-to-a-random-secret-string}
       JWT_EXPIRATION_HOURS: ${JWT_EXPIRATION_HOURS:-168}
       LOG_LEVEL: ${LOG_LEVEL:-info}
