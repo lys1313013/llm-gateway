@@ -1,6 +1,6 @@
 # AGENTS.md
 
-This file provides guidance to Codex (Codex.ai/code) when working with code in this repository.
+本文件为在此仓库工作的编码助手（包括 Codex 和 Claude Code）提供统一指导。
 
 ## 项目概述
 
@@ -33,6 +33,23 @@ cd frontend && pnpm install && pnpm dev                 # 前端 :18888
 
 `proxy.HandleOpenAI()` / `proxy.HandleAnthropic()` 修改请求体 model 字段后转发上游。流式 SSE 逐块透传，`io.ReadCloser` wrapper 在 EOF 时聚合 chunk 写入 `api_logs`。流式日志写入使用 `context.Background()`（请求 ctx 可能已被取消）。超时由 `model_route.timeout` 控制，`-1` = 永不超时。
 
-### 数据库
+### 数据库与迁移
 
-`db.Init()` 通过 `CREATE TABLE IF NOT EXISTS` + `ALTER TABLE ADD COLUMN IF NOT EXISTS` 自动迁移，`db.Pool` 是全局 `*pgxpool.Pool`。
+`db.Pool` 是全局 `*pgxpool.Pool`。**结构变更走显式迁移，不在启动路径上**：
+
+- `gateway migrate` 应用缺失版本；`gateway migrate -status` 只读查看。迁移集在 `internal/db/migrations.go`，每个版本一个事务（PostgreSQL 的 DDL 是事务性的），跑在一条专用连接上并用 `pg_advisory_lock` 串行化。
+- 服务启动（`db.Init`）= `Connect` + 只读校验版本。库落后 / 从未迁移 / 已应用迁移的 SQL 文本被改动 → 拒绝启动；库比二进制新 → 只 WARN 并继续（保住回滚镜像这条路）。校验放在 `db.Init` 里，所以现有调用方自动被覆盖。
+- 应用启动**不发任何 DDL**——本机 dev 后端连着生产库时，启动本身不可能改动生产 schema。
+- 版本表 `schema_migrations` 记录 version / name / checksum（该版本全部 SQL 文本空白归一后的 sha256）/ `applied_at` / `execution_ms` / `app_version`。
+- 加迁移的规则：只追加新版本，不改已发布的 SQL 文本（checksum 会报错）；不得用 `CREATE INDEX CONCURRENTLY` / `VACUUM`（不能跑在事务里，有测试拦）。
+
+### 前端对话预览
+
+日志详情的「对话预览」由 `ConversationPreview.tsx` 渲染，协议归一化逻辑全部在纯函数模块 `conversationNormalize.ts`（无 React 依赖）：
+
+- `buildConversation(request, response, protocol)` 把 OpenAI / Anthropic 两种协议的请求+响应统一还原成 `Message[]`
+- 协议判定：`protocol` 字段（`openai`/`anthropic`）优先；缺失时 `detectAnthropicRequest()` 按内容特征探测——顶层 `system` 字段或 `image`/`tool_use`/`tool_result`/`thinking` 类型的 part 判 Anthropic，`image_url`/`input_audio`/`file` part 或 `tool_calls` 字段判 OpenAI。**注意**：OpenAI 多模态消息的 content 也是数组，不能仅凭数组 content 判定（曾因此把 OpenAI 图片请求误判成 Anthropic，显示为「未知类型内容块」）
+- 图片块由 `extractImageSrc()` 提取可渲染地址（OpenAI `image_url.url`、Anthropic base64 source 拼 `data:` URI、URL source 原样透出），有 `src` 时前端直接 `<Image>` 渲染，否则显示占位标签
+- Anthropic `tool_result` 内容为数组时，其中的图片 part 拆分为独立 image 块
+
+测试：`cd frontend && pnpm test`（Vitest），用例在 `conversationNormalize.test.ts`。改归一化逻辑前请先跑测试。

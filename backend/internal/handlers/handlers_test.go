@@ -67,10 +67,19 @@ func setupRouter(t *testing.T) *gin.Engine {
 	slog.SetDefault(slog.New(slog.NewTextHandler(io.Discard, nil)))
 
 	ctx := context.Background()
-	if err := db.Init(ctx); err != nil {
+	// 连不上测试库才 skip；连上了但迁移/校验失败必须让测试红 —— 后者意味着
+	// 迁移集本身坏了，不是环境问题。
+	if err := db.Connect(ctx); err != nil {
 		t.Skipf("skipping: cannot connect to test db: %v", err)
 	}
 	t.Cleanup(db.Close)
+	// 建表不再靠 db.Init 的副作用，显式跑迁移（幂等，重复调用无副作用）。
+	if err := db.Migrate(ctx, db.MigrateOptions{AppVersion: "test"}); err != nil {
+		t.Fatalf("migrate test db: %v", err)
+	}
+	if err := db.VerifySchema(ctx); err != nil {
+		t.Fatalf("verify test db schema: %v", err)
+	}
 
 	gin.SetMode(gin.TestMode)
 	r := gin.New()

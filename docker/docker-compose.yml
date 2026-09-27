@@ -4,7 +4,43 @@
 # talks to the shared PostgreSQL container (docker-compose.db.yml), and binds
 # to host port 33352 by default.
 
+# migrate 与 backend 共用同一份 DB 环境变量 —— 锚点定义一次，两处 *db-env 引用。
+# 顶层 x- 开头的键 Compose 会忽略，只当作 YAML 锚点的载体。
+x-db-env: &db-env
+  DB_HOST: ${DB_HOST:-host.docker.internal}
+  DB_PORT: ${DB_PORT:-5432}
+  DB_NAME: ${DB_NAME:-llm_gateway}
+  DB_USER: ${DB_USER:-postgres}
+  DB_PASSWORD: ${DB_PASSWORD:-password}
+  DB_TIMEZONE: ${DB_TIMEZONE:-Asia/Shanghai}
+  # 等 postgres 就绪的总秒数。postgres 在 docker-compose.db.yml 里、与本文件
+  # 不同 project，没有 depends_on，冷启动时先起来的一侧靠这个窗口等。
+  DB_CONNECT_TIMEOUT: ${DB_CONNECT_TIMEOUT:-60}
+  JWT_SECRET_KEY: ${JWT_SECRET_KEY:-change-me-to-a-random-secret-string}
+  JWT_EXPIRATION_HOURS: ${JWT_EXPIRATION_HOURS:-168}
+  LOG_LEVEL: ${LOG_LEVEL:-info}
+  SESSION_ID_HEADERS: ${SESSION_ID_HEADERS:-X-Claude-Code-Session-Id,X-Agent-Session-Id}
+
 services:
+  # ---------------------------------------------------------------------------
+  # 一次性迁移任务 —— 与 backend 同一个镜像，跑 `gateway migrate` 后退出。
+  #
+  # 应用启动**不再**自己迁移：backend 起来时只读校验 schema 版本，落后就拒绝
+  # 启动。所以结构变更必须有这一步，顺序由 backend 的 depends_on 保证。
+  #
+  # postgres 在 docker-compose.db.yml 里（不同 project），这里没法 depends_on
+  # 它，靠 DB_CONNECT_TIMEOUT 的重试窗口等。
+  # ---------------------------------------------------------------------------
+  migrate:
+    image: crpi-yvha9coypdedaafa.cn-beijing.personal.cr.aliyuncs.com/lys1313013/llm-gateway-backend:latest
+    container_name: llm_gateway_migrate
+    command: ["/app/gateway", "migrate"]
+    environment: *db-env
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    # 必须 no：迁移失败时这个容器要停下来让人看见，不是无限重启刷日志。
+    restart: "no"
+
   # ---------------------------------------------------------------------------
   # Go backend — image: ghcr.io/<owner>/llm-gateway-backend
   # Listens on container port 5001, which the frontend nginx proxies to.
@@ -16,25 +52,18 @@ services:
       default:
         aliases:
           - backend
-    environment:
-      DB_HOST: ${DB_HOST:-host.docker.internal}
-      DB_PORT: ${DB_PORT:-5432}
-      DB_NAME: ${DB_NAME:-llm_gateway}
-      DB_USER: ${DB_USER:-postgres}
-      DB_PASSWORD: ${DB_PASSWORD:-password}
-      DB_TIMEZONE: ${DB_TIMEZONE:-Asia/Shanghai}
-      # 等 postgres 就绪的总秒数。postgres 在 docker-compose.db.yml 里、与本文件
-      # 不同 project，没有 depends_on，冷启动时 backend 会先起来——靠这个窗口等。
-      DB_CONNECT_TIMEOUT: ${DB_CONNECT_TIMEOUT:-60}
-      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-change-me-to-a-random-secret-string}
-      JWT_EXPIRATION_HOURS: ${JWT_EXPIRATION_HOURS:-168}
-      LOG_LEVEL: ${LOG_LEVEL:-info}
-      SESSION_ID_HEADERS: ${SESSION_ID_HEADERS:-X-Claude-Code-Session-Id,X-Agent-Session-Id}
+    environment: *db-env
     ports:
       - "${BACKEND_HOST_PORT:-33352}:5001"
     extra_hosts:
       - "host.docker.internal:host-gateway"
     restart: always
+    # 等迁移跑完再起。这只是优化，不是正确性依赖：即使旧版 compose 不支持
+    # service_completed_successfully、backend 先起来了，它也会因 schema 版本
+    # 校验失败而非 0 退出，restart: always 会重试到 migrate 成功为止。
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
     healthcheck:
       test: ["CMD", "/app/gateway", "-version"]
       interval: 30s

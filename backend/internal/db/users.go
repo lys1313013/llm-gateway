@@ -94,14 +94,6 @@ func DeleteUser(ctx context.Context, id int) error {
 	return nil
 }
 
-// UpgradeLegacyRoles sets all users with no role (0 or NULL) to role=1 (root).
-// Used at startup to migrate pre-role deployments.
-func UpgradeLegacyRoles(ctx context.Context) error {
-	_, err := mustHavePool().Exec(ctx,
-		`UPDATE users SET role = 1 WHERE role = 0 OR role IS NULL`)
-	return err
-}
-
 func UpdateUserRole(ctx context.Context, id, role int) error {
 	tag, err := mustHavePool().Exec(ctx,
 		`UPDATE users SET role = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $1`, id, role)

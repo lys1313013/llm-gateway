@@ -7,6 +7,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -15,6 +16,7 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -35,6 +37,13 @@ func main() {
 	// 到实际可 accept 为止的墙钟时间，容器起 → 第一行日志那段黑盒靠它暴露。
 	bootStart := time.Now()
 
+	// 子命令分发：只在 os.Args[1] 不以 '-' 开头时发生。这个判断位置是关键 ——
+	// -version 必须在 config.Load() 和任何 DB 动作之前返回，compose 的
+	// healthcheck 就是 `["CMD", "/app/gateway", "-version"]`。
+	if len(os.Args) > 1 && !strings.HasPrefix(os.Args[1], "-") {
+		os.Exit(runSubcommand(os.Args[1], os.Args[2:]))
+	}
+
 	versionFlag := flag.Bool("version", false, "print version and exit")
 	flag.Parse()
 	if *versionFlag {
@@ -43,25 +52,19 @@ func main() {
 	}
 
 	cfg := config.Load()
-
-	// Logger
-	lvl := slog.LevelInfo
-	switch cfg.LogLevel {
-	case "debug":
-		lvl = slog.LevelDebug
-	case "warn":
-		lvl = slog.LevelWarn
-	case "error":
-		lvl = slog.LevelError
-	}
-	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: lvl})))
+	setupLogger(cfg)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// DB
+	// DB：开池 + 只读校验 schema 版本。迁移不在这里跑，走 `gateway migrate`。
 	if err := db.Init(ctx); err != nil {
-		slog.Error("db init", "err", err)
+		var mismatch *db.SchemaMismatchError
+		if errors.As(err, &mismatch) {
+			slog.Error("schema version mismatch", "err", mismatch.Error(), "hint", mismatch.Hint)
+		} else {
+			slog.Error("db init", "err", err)
+		}
 		os.Exit(1)
 	}
 	defer db.Close()
@@ -129,6 +132,109 @@ func main() {
 		slog.Error("shutdown", "err", err)
 	}
 	slog.Info("server stopped")
+}
+
+func setupLogger(cfg *config.Config) {
+	lvl := slog.LevelInfo
+	switch cfg.LogLevel {
+	case "debug":
+		lvl = slog.LevelDebug
+	case "warn":
+		lvl = slog.LevelWarn
+	case "error":
+		lvl = slog.LevelError
+	}
+	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: lvl})))
+}
+
+// runSubcommand 执行非服务类子命令并返回进程退出码。
+//
+// 退出码约定：0 成功/无变化，1 执行失败，2 未知子命令或参数错误
+// （flag.ExitOnError 自己会以 2 退出，与这里一致）。
+func runSubcommand(cmd string, args []string) int {
+	switch cmd {
+	case "migrate":
+		fs := flag.NewFlagSet("migrate", flag.ExitOnError)
+		statusOnly := fs.Bool("status", false, "只读查看版本状态，不执行迁移")
+		_ = fs.Parse(args)
+
+		setupLogger(config.Load())
+		ctx := context.Background()
+
+		if *statusOnly {
+			if err := printSchemaStatus(ctx); err != nil {
+				slog.Error("migrate -status", "err", err)
+				return 1
+			}
+			return 0
+		}
+
+		if err := db.Migrate(ctx, db.MigrateOptions{AppVersion: version}); err != nil {
+			var mismatch *db.SchemaMismatchError
+			if errors.As(err, &mismatch) {
+				slog.Error("migration refused", "err", mismatch.Error(), "hint", mismatch.Hint)
+			} else {
+				slog.Error("migrate", "err", err)
+			}
+			return 1
+		}
+		return 0
+
+	default:
+		fmt.Fprintf(os.Stderr,
+			"未知子命令 %q\n\n用法:\n"+
+				"  gateway [-version]          启动服务\n"+
+				"  gateway migrate [-status]   执行迁移 / 只读查看版本状态\n", cmd)
+		return 2
+	}
+}
+
+// printSchemaStatus 打印「库里有什么 / 二进制期望什么」，对应 `migrate -status`。
+// 只读：不建表、不加锁、不迁移。
+func printSchemaStatus(ctx context.Context) error {
+	if err := db.Connect(ctx); err != nil {
+		return err
+	}
+	defer db.Close()
+
+	st, err := db.ReadSchemaStatus(ctx)
+	if err != nil {
+		return err
+	}
+
+	if !st.TableExists {
+		slog.Info("schema 从未迁移（schema_migrations 表不存在）",
+			"binary_version", db.LatestVersion())
+		return nil
+	}
+	for _, r := range st.Applied {
+		// execution_ms / app_version 在库里可空，直接交给 slog 会打成指针地址。
+		slog.Info("applied",
+			"version", r.Version, "name", r.Name,
+			"applied_at", r.AppliedAt.Format(time.RFC3339),
+			"execution_ms", derefInt(r.ExecutionMS), "app_version", derefStr(r.AppVersion))
+	}
+	slog.Info("schema status",
+		"db_version", st.DBVersion,
+		"binary_version", db.LatestVersion(),
+		"pending", fmt.Sprint(st.Pending),
+		"checksum_drift", fmt.Sprint(st.ChecksumDrift),
+		"db_ahead_of_binary", st.Ahead)
+	return nil
+}
+
+func derefInt(p *int) any {
+	if p == nil {
+		return nil
+	}
+	return *p
+}
+
+func derefStr(p *string) any {
+	if p == nil {
+		return nil
+	}
+	return *p
 }
 
 func registerRoutes(r *gin.Engine) {
@@ -217,29 +323,29 @@ func registerRoutes(r *gin.Engine) {
 	r.POST("/api/provider/test/connect", handlers.ProviderConnect)
 }
 
-// bootstrapRoot creates a root user on first start, or upgrades existing
-// users table is empty. Mirrors the Python backend's behaviour in app.py.
+// bootstrapRoot creates a root user if no users exist. Mirrors the Python
+// backend's behaviour in app.py.
+//
+// 「role=0/NULL 的存量用户升级为 root」原本也在这里、每次启动都跑，现已并进
+// 迁移 v1 的一次性清理（见 db.cleanupStmts）。role 列由 backfill 保证
+// NOT NULL DEFAULT 3、CreateUser 显式传 role，所以 v1 之后不会再出现 0/NULL。
 func bootstrapRoot(ctx context.Context) error {
 	n, err := db.GetUserCount(ctx)
 	if err != nil {
 		return err
 	}
-	if n == 0 {
-		hash, err := auth.HashPassword("llm_gateway")
-		if err != nil {
-			return err
-		}
-		if _, err := db.CreateUser(ctx, "root", hash, 1); err != nil {
-			return err
-		}
-		slog.Info("Default root user created (username: root, password: llm_gateway)")
+	if n > 0 {
 		return nil
 	}
 
-	// Upgrade existing users with no role to root (role=1).
-	if err := db.UpgradeLegacyRoles(ctx); err != nil {
-		return fmt.Errorf("upgrade existing users to root: %w", err)
+	hash, err := auth.HashPassword("llm_gateway")
+	if err != nil {
+		return err
 	}
+	if _, err := db.CreateUser(ctx, "root", hash, 1); err != nil {
+		return err
+	}
+	slog.Info("Default root user created (username: root, password: llm_gateway)")
 	return nil
 }
 

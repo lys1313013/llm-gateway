@@ -45,12 +45,18 @@ backend/
 ```bash
 # 1. Start PostgreSQL
 cd ..
-docker-compose -f docker-compose.db.yml up -d
+docker compose -f docker/docker-compose.db.yml up -d
 
-# 2. Start the Go server
+# 2. Create / upgrade the schema (required; the server does not migrate on boot)
 cd backend
+go run ./cmd/gateway migrate
+
+# 3. Start the Go server
 go run ./cmd/gateway
 ```
+
+`gateway migrate -status` prints the applied versions and any drift without
+touching anything.
 
 ### Hot reload (local dev)
 
@@ -79,8 +85,9 @@ relevant keys are:
 | `DB_USER`         | `postgres`           |
 | `DB_PASSWORD`     | `password`           |
 | `DB_TIMEZONE`     | `Asia/Shanghai`      |
+| `DB_CONNECT_TIMEOUT` | `60`              |
 | `JWT_SECRET_KEY`  | `dev-secret-key-change-in-production` |
 | `LOG_LEVEL`       | `info`               |
 
-The server creates the default admin user (`admin` / `llm_gateway`) on
+The server creates the default root user (`root` / `llm_gateway`) on
 first boot if the `users` table is empty.

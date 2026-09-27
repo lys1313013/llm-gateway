@@ -27,6 +27,7 @@
 - [配置说明](#配置说明)
 - [管理后台 API](#管理后台-api)
 - [使用示例](#使用示例)
+- [数据库迁移](#数据库迁移)
 - [环境变量](#环境变量)
 - [技术栈](#技术栈)
 - [许可证](#许可证)
@@ -35,28 +36,34 @@
 
 ## 快速开始
 
-三步跑起来：
+四步跑起来：
 
 ```bash
 # 1. 启动 PostgreSQL
-docker-compose -f docker-compose.db.yml up -d
+docker compose -f docker/docker-compose.db.yml up -d
 
-# 2. 启动后端（默认端口 5001）
+# 2. 建表 / 升级 schema（必须，且只需在结构变更后跑）
 cd backend
+go run ./cmd/gateway migrate
 
+# 3. 启动后端（默认端口 5002）
 go run ./cmd/gateway
 
-# 3. 启动管理后台（开发模式，端口 18888）
+# 4. 启动管理后台（开发模式，端口 18888）
 cd frontend
 pnpm install
 pnpm dev
 ```
 
 启动后：
-- **网关接口**：`http://127.0.0.1:5001/v1`
+- **网关接口**：`http://127.0.0.1:5002/v1`
 - **管理后台**：`http://localhost:18888`
 
-> 客户端 SDK 的 Base URL 配置为 `http://127.0.0.1:5001/v1` 即可接入。
+> 客户端 SDK 的 Base URL 配置为 `http://127.0.0.1:5002/v1` 即可接入。
+
+> 第 2 步不能省：**后端启动时不迁移、只校验版本**，schema 落后于二进制就会拒绝启动
+> （这是刻意的——本机 dev 后端连着生产库时，启动本身不可能改动生产 schema）。
+> `go run ./cmd/gateway migrate -status` 可以只读查看当前版本。
 
 ---
 
@@ -77,11 +84,11 @@ pnpm dev
 ```
 .
 ├── backend/
-│   ├── cmd/gateway/               # HTTP 服务入口
+│   ├── cmd/gateway/               # HTTP 服务入口 + migrate 子命令
 │   ├── internal/
 │   │   ├── auth/                  # 密码 + JWT + API Key
 │   │   ├── config/                # env 加载
-│   │   ├── db/                    # pgx 连接池 + schema + CRUD
+│   │   ├── db/                    # pgx 连接池 + 迁移 + CRUD
 │   │   ├── handlers/              # gin 路由（chat / anthropic / admin / auth / test）
 │   │   ├── middleware/            # auth + CORS
 │   │   ├── models/                # 领域类型
@@ -102,7 +109,9 @@ pnpm dev
 │   │   └── JsonViewer.tsx         # JSON 查看器（Monaco Editor）
 │   ├── vite.config.ts             # Vite 配置（端口 18888，代理 /api、/v1）
 │   └── package.json
-├── docker-compose.db.yml         # PostgreSQL 容器
+├── docker/
+│   ├── docker-compose.yml         # backend + frontend + 一次性 migrate 任务
+│   └── docker-compose.db.yml      # PostgreSQL 容器
 ├── README.md
 └── 需求文档.md
 ```
@@ -170,7 +179,7 @@ pnpm dev
 ### OpenAI 协议
 
 ```bash
-curl http://127.0.0.1:5001/v1/chat/completions \
+curl http://127.0.0.1:5002/v1/chat/completions \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer any-key" \
   -d '{
@@ -182,7 +191,7 @@ curl http://127.0.0.1:5001/v1/chat/completions \
 ```python
 from openai import OpenAI
 
-client = OpenAI(base_url="http://127.0.0.1:5001/v1", api_key="any-key")
+client = OpenAI(base_url="http://127.0.0.1:5002/v1", api_key="any-key")
 resp = client.chat.completions.create(
     model="gpt-4-turbo",
     messages=[{"role": "user", "content": "你好"}],
@@ -193,7 +202,7 @@ print(resp.choices[0].message.content)
 ### Anthropic 协议
 
 ```bash
-curl http://127.0.0.1:5001/v1/messages \
+curl http://127.0.0.1:5002/v1/messages \
   -H "Content-Type: application/json" \
   -H "x-api-key: any-key" \
   -H "anthropic-version: 2023-06-01" \
@@ -207,7 +216,7 @@ curl http://127.0.0.1:5001/v1/messages \
 ```python
 import anthropic
 
-client = anthropic.Anthropic(base_url="http://127.0.0.1:5001", api_key="any-key")
+client = anthropic.Anthropic(base_url="http://127.0.0.1:5002", api_key="any-key")
 msg = client.messages.create(
     model="claude-sonnet-4-20250514",
     max_tokens=1024,
@@ -217,6 +226,24 @@ print(msg.content[0].text)
 ```
 
 > 更多示例（流式请求、工具调用等）请参见 [需求文档](需求文档.md)。
+
+---
+
+## 数据库迁移
+
+结构变更走**显式迁移**，不在应用启动路径上：
+
+```bash
+go run ./cmd/gateway migrate            # 应用缺失的版本
+go run ./cmd/gateway migrate -status    # 只读查看当前版本 / 待应用 / 漂移
+```
+
+- 迁移集在 `backend/internal/db/migrations.go`，每个版本一个事务，跑在一条专用连接上并用 `pg_advisory_lock` 串行化（并发跑多个 `migrate` 会排队，不会重复应用）。
+- 版本表 `schema_migrations` 记录 `version` / `name` / `checksum` / `applied_at` / `execution_ms` / `app_version`。
+- **启动只校验**（`db.Init`）：库落后于二进制、或从未迁移 → 拒绝启动并打印期望/实际版本；库比二进制新 → 只 WARN 并继续（保住「回滚镜像」这条路）；已应用迁移的 SQL 文本被改动 → 启动 WARN、`migrate` 报错。
+- 容器部署：`docker/docker-compose.yml` 里有一次性 `migrate` 任务，backend 通过 `depends_on: service_completed_successfully` 等它跑完。
+
+加迁移的规则：**只追加新版本，不改已发布版本的 SQL 文本**（checksum 会拦）；不得用 `CREATE INDEX CONCURRENTLY` / `VACUUM`（不能跑在事务里，有测试拦）。
 
 ---
 
