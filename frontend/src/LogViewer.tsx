@@ -5,6 +5,7 @@ import { ClusterOutlined } from '@ant-design/icons'
 import dayjs from 'dayjs'
 import JsonViewer from './JsonViewer'
 import ConversationPreview from './ConversationPreview'
+import LogStatusTag from './LogStatusTag'
 import { apiFetch } from './api'
 
 const { Title, Text } = Typography
@@ -236,13 +237,10 @@ const LogViewer = () => {
         title: '状态码',
         dataIndex: 'status_code',
         key: 'status_code',
-        width: 90,
-        render: (code?: number | null) => {
-          if (!code) {
-            return '-'
-          }
-          return <Tag color={code === 200 ? 'success' : 'error'}>{code}</Tag>
-        },
+        width: 120,
+        render: (code: number | null | undefined, record: LogRecord) => (
+          <LogStatusTag statusCode={code} errorMessage={record.error_message} />
+        ),
       },
       {
         title: '耗时',
@@ -523,9 +521,7 @@ const LogViewer = () => {
                 {currentLog.provider_name || '-'}
               </Descriptions.Item>
               <Descriptions.Item label="状态码">
-                <Tag color={currentLog.status_code === 200 ? 'success' : 'error'}>
-                  {currentLog.status_code ?? '-'}
-                </Tag>
+                <LogStatusTag statusCode={currentLog.status_code} errorMessage={currentLog.error_message} />
               </Descriptions.Item>
 
               <Descriptions.Item label="模型">{currentLog.model || '-'}</Descriptions.Item>

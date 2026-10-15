@@ -19,6 +19,7 @@ const protocolColor = (protocol?: string | null): string => {
   }
 }
 import ConversationPreview from './ConversationPreview'
+import LogStatusTag from './LogStatusTag'
 import { apiFetch } from './api'
 
 const { Title, Text } = Typography
@@ -515,9 +516,10 @@ const SessionDetail = ({ sessionId }: Props) => {
       {
         title: '状态',
         dataIndex: 'status_code',
-        width: 80,
-        render: (c?: number | null) =>
-          c ? <Tag color={c === 200 ? 'success' : 'error'}>{c}</Tag> : '-',
+        width: 120,
+        render: (c: number | null | undefined, record: SessionLog) => (
+          <LogStatusTag statusCode={c} errorMessage={record.error_message} />
+        ),
       },
       {
         title: '耗时(ms)',
@@ -652,7 +654,7 @@ const SessionDetail = ({ sessionId }: Props) => {
                   ? meta.models.map(m => <Tag key={m} color="blue">{m}</Tag>)
                   : '-'}
               </Descriptions.Item>
-              <Descriptions.Item label="状态码分布">
+              <Descriptions.Item label="HTTP 状态码分布">
                 {meta.status_summary
                   ? Object.entries(meta.status_summary).map(([code, n]) => (
                       <Tag
@@ -754,9 +756,7 @@ const SessionDetail = ({ sessionId }: Props) => {
                 {currentLog.provider_name || '-'}
               </Descriptions.Item>
               <Descriptions.Item label="状态码">
-                <Tag color={currentLog.status_code === 200 ? 'success' : 'error'}>
-                  {currentLog.status_code ?? '-'}
-                </Tag>
+                <LogStatusTag statusCode={currentLog.status_code} errorMessage={currentLog.error_message} />
               </Descriptions.Item>
               <Descriptions.Item label="模型">{currentLog.model || '-'}</Descriptions.Item>
               <Descriptions.Item label="耗时 (ms)">

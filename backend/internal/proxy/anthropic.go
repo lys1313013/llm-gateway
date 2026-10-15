@@ -1,10 +1,9 @@
 package proxy
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
-	"fmt"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -66,49 +65,27 @@ func HandleAnthropic(ctx context.Context, requestData []byte, cfg models.ProxyCo
 		body, _ := io.ReadAll(resp.Body)
 		_ = resp.Body.Close()
 
-		var parsed any
-		_ = json.Unmarshal(body, &parsed)
-		var respData any = parsed
-		if _, ok := parsed.(map[string]any); !ok {
-			respData = map[string]any{"raw": string(body)}
-		}
-		respBytes, _ := json.Marshal(respData)
+		respBytes, errBody, errorMessage := anthropicHTTPError(body, resp.StatusCode)
 
 		_ = db.InsertLog(ctx, db.InsertLogInput{
-			Model:            strPtr(modelFromRequest(probe, cfg.Model)),
-			ProviderID:       cfg.ProviderID,
-			ProviderName:     strPtrOrNil(cfg.ProviderName),
-			IsStream:         isStream,
-			StatusCode:       resp.StatusCode,
-			ProcessingTimeMs: int(time.Since(start).Milliseconds()),
-			TargetURL:        strPtr(cfg.TargetURL),
-			RequestData:      requestData,
-			ResponseData:     respBytes,
-			RequestHeaders:   hdrpkg.ToJSON(cfg.RequestHeaders),
-			ResponseHeaders:  hdrpkg.ToJSON(hdrpkg.FromHTTPHeader(resp.Header)),
-			ErrorMessage:     strPtr(fmt.Sprintf("Target API returned error: %d", resp.StatusCode)),
-			Protocol:         strPtr(cfg.Protocol),
-			SessionID:        strPtrOrNil(cfg.SessionID),
-			UserID:         intPtrOrNil(cfg.UserID),
+			Model:              strPtr(modelFromRequest(probe, cfg.Model)),
+			ProviderID:         cfg.ProviderID,
+			ProviderName:       strPtrOrNil(cfg.ProviderName),
+			IsStream:           isStream,
+			StatusCode:         resp.StatusCode,
+			ProcessingTimeMs:   int(time.Since(start).Milliseconds()),
+			TargetURL:          strPtr(cfg.TargetURL),
+			RequestData:        requestData,
+			ResponseData:       respBytes,
+			RequestHeaders:     hdrpkg.ToJSON(cfg.RequestHeaders),
+			ResponseHeaders:    hdrpkg.ToJSON(hdrpkg.FromHTTPHeader(resp.Header)),
+			ErrorMessage:       strPtr(errorMessage),
+			Protocol:           strPtr(cfg.Protocol),
+			SessionID:          strPtrOrNil(cfg.SessionID),
+			UserID:             intPtrOrNil(cfg.UserID),
 			LastMessagePreview: extractLastMessagePreview(requestData),
 		})
 
-		// Return Anthropic-format error
-		errBody, _ := json.Marshal(map[string]any{
-			"type": "error",
-			"error": map[string]any{
-				"type":    "api_error",
-				"message": fmt.Sprintf("Upstream returned status %d", resp.StatusCode),
-			},
-		})
-		// If the upstream already returned an Anthropic-shaped error, prefer it
-		if _, ok := parsed.(map[string]any); ok {
-			if m, ok := parsed.(map[string]any); ok {
-				if _, hasErr := m["error"]; hasErr {
-					errBody = body
-				}
-			}
-		}
 		return resp.StatusCode, nil, io.NopCloser(strings.NewReader(string(errBody))), false, nil
 	}
 
@@ -167,8 +144,8 @@ func HandleAnthropic(ctx context.Context, requestData []byte, cfg models.ProxyCo
 		Protocol:                 strPtr(cfg.Protocol),
 		UsageData:                norm.Raw,
 		SessionID:                strPtrOrNil(cfg.SessionID),
-		UserID:         intPtrOrNil(cfg.UserID),
-		LastMessagePreview: extractLastMessagePreview(requestData),
+		UserID:                   intPtrOrNil(cfg.UserID),
+		LastMessagePreview:       extractLastMessagePreview(requestData),
 	})
 
 	return resp.StatusCode, nil, io.NopCloser(strings.NewReader(string(body))), false, nil
@@ -191,6 +168,7 @@ type anthropicStreamer struct {
 
 	pending  []byte
 	finished bool
+	readErr  error
 }
 
 func (s *anthropicStreamer) Read(p []byte) (int, error) {
@@ -201,7 +179,10 @@ func (s *anthropicStreamer) Read(p []byte) (int, error) {
 	if n > 0 {
 		s.pending = append(s.pending, p[:n]...)
 	}
-	if err == io.EOF {
+	if err != nil {
+		if !errors.Is(err, io.EOF) {
+			s.readErr = err
+		}
 		s.finished = true
 		s.finalize()
 	}
@@ -220,8 +201,46 @@ func (s *anthropicStreamer) finalize() {
 	if !s.logResponses {
 		return
 	}
-	events := s.collectEvents()
+	in := s.logInput()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := db.InsertLog(ctx, in); err != nil {
+		slog.Error("anthropic stream: insert log", "err", err, "session_id", s.sessionID)
+	}
+}
+
+// logInput is independent of the database so partial streams and error events
+// can be checked without making a real upstream request or writing test logs.
+func (s *anthropicStreamer) logInput() db.InsertLogInput {
+	events, parseErr := parseAnthropicEvents(s.pending)
 	agg := aggregateAnthropicStream(events)
+	streamErr := errors.Join(s.readErr, parseErr)
+	started, stopped := false, false
+	for _, ev := range events {
+		switch ev["type"] {
+		case "message_start":
+			started = true
+		case "message_stop":
+			stopped = true
+		case "error":
+			envelope, message := normalizeAnthropicError(ev, http.StatusOK)
+			agg["error"] = envelope["error"]
+			if id, ok := envelope["request_id"]; ok {
+				agg["request_id"] = id
+			}
+			streamErr = errors.Join(streamErr, errors.New(message))
+		}
+	}
+	if streamErr == nil && (!started || !stopped) {
+		streamErr = errors.New("incomplete Anthropic stream: missing message_start or message_stop")
+	}
+	var errorMessage *string
+	if streamErr != nil {
+		errorMessage = strPtr(streamErr.Error())
+		// Retain the original stream for diagnosis instead of replacing errors
+		// or malformed events with an apparently successful empty message.
+		agg["raw"] = string(s.pending)
+	}
 	aggJSON, _ := json.Marshal(agg)
 
 	usageBytes, _ := json.Marshal(agg["usage"])
@@ -233,10 +252,7 @@ func (s *anthropicStreamer) finalize() {
 		norm = &n
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	_ = db.InsertLog(ctx, db.InsertLogInput{
+	return db.InsertLogInput{
 		Model:                    strPtr(s.model),
 		ProviderID:               s.providerID,
 		ProviderName:             s.providerName,
@@ -251,47 +267,30 @@ func (s *anthropicStreamer) finalize() {
 		TargetURL:                strPtr(s.targetURL),
 		RequestData:              s.requestData,
 		ResponseData:             aggJSON,
+		ErrorMessage:             errorMessage,
 		RequestHeaders:           hdrpkg.ToJSON(s.requestHeaders),
 		ResponseHeaders:          hdrpkg.ToJSON(s.responseHeaders),
 		Protocol:                 strPtr(s.protocol),
 		UsageData:                norm.Raw,
 		SessionID:                strPtrOrNil(s.sessionID),
-		UserID:         intPtrOrNil(s.userID),
-		LastMessagePreview: extractLastMessagePreview(s.requestData),
-	})
-}
-
-func (s *anthropicStreamer) collectEvents() []map[string]any {
-	var out []map[string]any
-	scanner := bufio.NewScanner(strings.NewReader(string(s.pending)))
-	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
-	for scanner.Scan() {
-		line := scanner.Text()
-		if !strings.HasPrefix(line, "data: ") {
-			continue
-		}
-		payload := strings.TrimPrefix(line, "data: ")
-		var ev map[string]any
-		if err := json.Unmarshal([]byte(payload), &ev); err == nil {
-			out = append(out, ev)
-		}
+		UserID:                   intPtrOrNil(s.userID),
+		LastMessagePreview:       extractLastMessagePreview(s.requestData),
 	}
-	return out
 }
 
 // aggregateAnthropicStream mirrors _aggregate_anthropic_stream_events in
 // anthropic_proxy.py.
 func aggregateAnthropicStream(events []map[string]any) map[string]any {
 	result := map[string]any{
-		"id":         nil,
-		"type":       "message",
-		"role":       "assistant",
-		"model":      nil,
-		"content":    []any{},
+		"id":          nil,
+		"type":        "message",
+		"role":        "assistant",
+		"model":       nil,
+		"content":     []any{},
 		"stop_reason": nil,
 		"usage": map[string]any{
-			"input_tokens":                 0,
-			"output_tokens":                0,
+			"input_tokens":                0,
+			"output_tokens":               0,
 			"cache_creation_input_tokens": 0,
 			"cache_read_input_tokens":     0,
 		},
