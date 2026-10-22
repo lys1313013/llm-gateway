@@ -51,6 +51,8 @@ go run ./cmd/gateway
 
 # 4. 启动管理后台（开发模式，端口 18888）
 cd frontend
+nvm install # 按 .nvmrc 安装并切换到 Node.js 24.22.1 LTS
+corepack enable # 使用 package.json 中指定的 pnpm 版本
 pnpm install
 pnpm dev
 ```

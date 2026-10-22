@@ -1,5 +1,19 @@
 # React + TypeScript + Vite
 
+## Development environment
+
+Use Node.js 24.22.1 LTS, matching `.nvmrc` and the Docker build image:
+
+```bash
+nvm install
+corepack enable
+pnpm install --frozen-lockfile
+pnpm dev
+```
+
+From the repository root, `./start-frontend.sh` selects the version in `.nvmrc`
+when nvm is installed and uses Corepack to run the pinned pnpm version.
+
 This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
 
 Currently, two official plugins are available:
