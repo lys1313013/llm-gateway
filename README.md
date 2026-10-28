@@ -244,6 +244,8 @@ go run ./cmd/gateway migrate -status    # 只读查看当前版本 / 待应用 /
 - 版本表 `schema_migrations` 记录 `version` / `name` / `checksum` / `applied_at` / `execution_ms` / `app_version`。
 - **启动只校验**（`db.Init`）：库落后于二进制、或从未迁移 → 拒绝启动并打印期望/实际版本；库比二进制新 → 只 WARN 并继续（保住「回滚镜像」这条路）；已应用迁移的 SQL 文本被改动 → 启动 WARN、`migrate` 报错。
 - 容器部署：`docker/docker-compose.yml` 里有一次性 `migrate` 任务，backend 通过 `depends_on: service_completed_successfully` 等它跑完。
+- 应用 Compose 项目名固定为 `llm-gateway-app`，与独立 PostgreSQL 项目隔离；不要用 `-p` 或 `COMPOSE_PROJECT_NAME` 将两者设为同名。迁移服务的 `command` 只传 `migrate`，镜像入口已是 `/app/gateway`。
+- 从旧项目名升级时，先备份 Compose 文件和 `.env`，保留端口、数据库连接及 JWT 密钥；停止并删除旧的 `llm_gateway_backend`、`llm_gateway_frontend` 容器后，再执行新版 Compose 的 `up -d`。保留 PostgreSQL 容器和数据卷，不使用 `--remove-orphans` 或 `down -v`。
 
 加迁移的规则：**只追加新版本，不改已发布版本的 SQL 文本**（checksum 会拦）；不得用 `CREATE INDEX CONCURRENTLY` / `VACUUM`（不能跑在事务里，有测试拦）。
 

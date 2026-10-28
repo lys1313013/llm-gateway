@@ -4,6 +4,9 @@
 # talks to the shared PostgreSQL container (docker-compose.db.yml), and binds
 # to host port 33352 by default.
 
+# 与独立部署的 PostgreSQL 使用不同项目名，避免 default 网络标识冲突。
+name: llm-gateway-app
+
 # migrate 与 backend 共用同一份 DB 环境变量 —— 锚点定义一次，两处 *db-env 引用。
 # 顶层 x- 开头的键 Compose 会忽略，只当作 YAML 锚点的载体。
 x-db-env: &db-env
@@ -34,7 +37,8 @@ services:
   migrate:
     image: crpi-yvha9coypdedaafa.cn-beijing.personal.cr.aliyuncs.com/lys1313013/llm-gateway-backend:latest
     container_name: llm_gateway_migrate
-    command: ["/app/gateway", "migrate"]
+    # 镜像 ENTRYPOINT 已是 /app/gateway，这里只传子命令。
+    command: ["migrate"]
     environment: *db-env
     extra_hosts:
       - "host.docker.internal:host-gateway"
