@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Layout, Menu, Typography, Button, Dropdown, Tooltip, theme } from 'antd'
+import { Layout, Menu, Button, Dropdown, Tooltip, theme } from 'antd'
 import {
   FileTextOutlined,
   BarChartOutlined,
@@ -32,9 +32,9 @@ import UserManagement from './UserManagement'
 import TeamManagement from './TeamManagement'
 import { isAuthenticated, removeToken, getCurrentUser } from './api'
 import { useTheme } from './theme/ThemeContext'
+import './App.css'
 
 const { Content } = Layout
-const { Title } = Typography
 const SIDEBAR_STORAGE_KEY = 'llm-gateway-sidebar-collapsed'
 
 const ALL_KEYS = [
@@ -84,7 +84,7 @@ const App = () => {
       return false
     }
   })
-  const sidebarWidth = sidebarCollapsed ? 80 : 200
+  const sidebarWidth = sidebarCollapsed ? 72 : 216
 
   useEffect(() => {
     try {
@@ -199,6 +199,7 @@ const App = () => {
     <Layout style={{ minHeight: '100vh' }}>
       <div
         id="app-sidebar"
+        className={`app-sidebar${sidebarCollapsed ? ' is-collapsed' : ''}`}
         style={{
           width: sidebarWidth,
           boxSizing: 'border-box',
@@ -211,65 +212,61 @@ const App = () => {
           display: 'flex',
           flexDirection: 'column',
           overflow: 'hidden',
+          zIndex: 10,
         }}
       >
-        <div style={{ padding: '20px 16px', textAlign: 'center', flexShrink: 0 }}>
-          <div style={{ display: 'flex', flexDirection: sidebarCollapsed ? 'column' : 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
-            <Title level={4} title="LLM Gateway" style={{ color: token.colorPrimary, margin: 0, flex: 1, textAlign: 'left', whiteSpace: 'nowrap' }}>
-              {sidebarCollapsed ? 'LLM' : 'LLM Gateway'}
-            </Title>
-            <Tooltip title={isDark ? '切换到亮色模式' : '切换到暗色模式'}>
-              <Button
-                type="text"
-                size="small"
-                icon={isDark ? <BulbFilled /> : <BulbOutlined />}
-                onClick={toggleTheme}
-                aria-label="切换主题"
-                style={{ color: token.colorTextSecondary }}
-              />
-            </Tooltip>
-          </div>
+        <div className="sidebar-brand" title="LLM Gateway">
+          <span className="sidebar-brand-mark" style={{ color: token.colorPrimary, background: token.colorPrimaryBg }}>G</span>
+          {!sidebarCollapsed && <span className="sidebar-brand-name">LLM Gateway</span>}
         </div>
-        <div style={{ flex: 1, overflowY: 'auto' }}>
+        <div className="sidebar-navigation">
           <Menu
+            className="sidebar-menu"
             mode="inline"
             inlineCollapsed={sidebarCollapsed}
             selectedKeys={[activeKey]}
             defaultOpenKeys={openKeys}
             onClick={handleMenuClick}
             items={menuItems}
-            style={{ border: 'none', background: 'transparent' }}
+            style={{ width: '100%', border: 'none', background: 'transparent', color: token.colorTextSecondary }}
           />
         </div>
-        <div style={{ borderTop: `1px solid ${token.colorBorderSecondary}`, padding: '8px 12px', flexShrink: 0 }}>
+        <div className="sidebar-footer" style={{ borderTop: `1px solid ${token.colorBorderSecondary}` }}>
+          <Tooltip title={sidebarCollapsed ? (isDark ? '切换到亮色模式' : '切换到暗色模式') : undefined} placement="right">
+            <Button
+              className="sidebar-action"
+              type="text"
+              icon={isDark ? <BulbFilled /> : <BulbOutlined />}
+              onClick={toggleTheme}
+              aria-label="切换主题"
+              style={{ color: token.colorTextSecondary }}
+            >
+              {sidebarCollapsed ? null : (isDark ? '亮色模式' : '暗色模式')}
+            </Button>
+          </Tooltip>
           <Tooltip title={sidebarCollapsed ? sidebarToggleLabel : undefined} placement="right">
             <Button
+              className="sidebar-action"
               type="text"
               icon={sidebarCollapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
               onClick={() => setSidebarCollapsed((collapsed) => !collapsed)}
               aria-label={sidebarToggleLabel}
               aria-expanded={!sidebarCollapsed}
               aria-controls="app-sidebar"
-              style={{ width: '100%', justifyContent: sidebarCollapsed ? 'center' : 'flex-start', marginBottom: 8 }}
+              style={{ color: token.colorTextSecondary }}
             >
               {sidebarCollapsed ? null : sidebarToggleLabel}
             </Button>
           </Tooltip>
           <Dropdown menu={{ items: userMenuItems }} placement="topLeft">
             <Button
+              className="sidebar-action sidebar-account"
               type="text"
               icon={<UserOutlined />}
               aria-label={userLabel}
               title={sidebarCollapsed ? userLabel : undefined}
-              style={{
-                width: '100%',
-                textAlign: 'left',
-                justifyContent: sidebarCollapsed ? 'center' : 'flex-start',
-                padding: sidebarCollapsed ? '8px 0' : '8px 16px',
-                height: 'auto',
-              }}
             >
-              {sidebarCollapsed ? null : userLabel}
+              {sidebarCollapsed ? null : <span className="sidebar-account-label">{user?.username || 'User'}<span style={{ color: token.colorTextTertiary }}>{roleLabel}</span></span>}
             </Button>
           </Dropdown>
         </div>
