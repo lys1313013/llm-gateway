@@ -14,6 +14,8 @@ import {
   TeamOutlined,
   BulbOutlined,
   BulbFilled,
+  MenuFoldOutlined,
+  MenuUnfoldOutlined,
 } from '@ant-design/icons'
 import TokenStats from './TokenStats'
 import ConfigProvider from './ConfigProvider'
@@ -33,6 +35,7 @@ import { useTheme } from './theme/ThemeContext'
 
 const { Content } = Layout
 const { Title } = Typography
+const SIDEBAR_STORAGE_KEY = 'llm-gateway-sidebar-collapsed'
 
 const ALL_KEYS = [
   'logs',
@@ -74,6 +77,22 @@ const App = () => {
   const { token } = theme.useToken()
   const [authed, setAuthed] = useState(() => isAuthenticated())
   const [hashRoute, setHashRoute] = useState<HashRoute>(() => getHashRoute())
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
+    try {
+      return localStorage.getItem(SIDEBAR_STORAGE_KEY) === 'true'
+    } catch {
+      return false
+    }
+  })
+  const sidebarWidth = sidebarCollapsed ? 80 : 200
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(SIDEBAR_STORAGE_KEY, String(sidebarCollapsed))
+    } catch {
+      // Keep the toggle usable when browser storage is unavailable.
+    }
+  }, [sidebarCollapsed])
 
   useEffect(() => {
     const onHashChange = () => {
@@ -137,6 +156,8 @@ const App = () => {
   const user = getCurrentUser()
   const isAdmin = (user?.role ?? 99) <= 2
   const roleLabel = ({ 1: '超级管理员', 2: '管理员', 3: '普通用户' } as Record<number, string>)[user?.role ?? 0] || ''
+  const userLabel = roleLabel ? `${user?.username || 'User'} (${roleLabel})` : (user?.username || 'User')
+  const sidebarToggleLabel = sidebarCollapsed ? '展开菜单' : '收起菜单'
 
   const menuItems = [
     { key: 'logs', icon: <FileTextOutlined />, label: '请求日志' },
@@ -177,8 +198,10 @@ const App = () => {
   return (
     <Layout style={{ minHeight: '100vh' }}>
       <div
+        id="app-sidebar"
         style={{
-          width: 200,
+          width: sidebarWidth,
+          boxSizing: 'border-box',
           background: token.colorBgContainer,
           position: 'fixed',
           left: 0,
@@ -191,9 +214,9 @@ const App = () => {
         }}
       >
         <div style={{ padding: '20px 16px', textAlign: 'center', flexShrink: 0 }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
-            <Title level={4} style={{ color: token.colorPrimary, margin: 0, flex: 1, textAlign: 'left' }}>
-              LLM Gateway
+          <div style={{ display: 'flex', flexDirection: sidebarCollapsed ? 'column' : 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+            <Title level={4} title="LLM Gateway" style={{ color: token.colorPrimary, margin: 0, flex: 1, textAlign: 'left', whiteSpace: 'nowrap' }}>
+              {sidebarCollapsed ? 'LLM' : 'LLM Gateway'}
             </Title>
             <Tooltip title={isDark ? '切换到亮色模式' : '切换到暗色模式'}>
               <Button
@@ -210,6 +233,7 @@ const App = () => {
         <div style={{ flex: 1, overflowY: 'auto' }}>
           <Menu
             mode="inline"
+            inlineCollapsed={sidebarCollapsed}
             selectedKeys={[activeKey]}
             defaultOpenKeys={openKeys}
             onClick={handleMenuClick}
@@ -218,23 +242,39 @@ const App = () => {
           />
         </div>
         <div style={{ borderTop: `1px solid ${token.colorBorderSecondary}`, padding: '8px 12px', flexShrink: 0 }}>
+          <Tooltip title={sidebarCollapsed ? sidebarToggleLabel : undefined} placement="right">
+            <Button
+              type="text"
+              icon={sidebarCollapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
+              onClick={() => setSidebarCollapsed((collapsed) => !collapsed)}
+              aria-label={sidebarToggleLabel}
+              aria-expanded={!sidebarCollapsed}
+              aria-controls="app-sidebar"
+              style={{ width: '100%', justifyContent: sidebarCollapsed ? 'center' : 'flex-start', marginBottom: 8 }}
+            >
+              {sidebarCollapsed ? null : sidebarToggleLabel}
+            </Button>
+          </Tooltip>
           <Dropdown menu={{ items: userMenuItems }} placement="topLeft">
             <Button
               type="text"
               icon={<UserOutlined />}
+              aria-label={userLabel}
+              title={sidebarCollapsed ? userLabel : undefined}
               style={{
                 width: '100%',
                 textAlign: 'left',
-                padding: '8px 16px',
+                justifyContent: sidebarCollapsed ? 'center' : 'flex-start',
+                padding: sidebarCollapsed ? '8px 0' : '8px 16px',
                 height: 'auto',
               }}
             >
-              {roleLabel ? `${user?.username || 'User'} (${roleLabel})` : (user?.username || 'User')}
+              {sidebarCollapsed ? null : userLabel}
             </Button>
           </Dropdown>
         </div>
       </div>
-      <Layout style={{ marginLeft: 200, background: token.colorBgLayout }}>
+      <Layout style={{ marginLeft: sidebarWidth, background: token.colorBgLayout }}>
         <Content style={{ padding: 24, background: token.colorBgLayout, minHeight: '100vh' }}>
           {isSessionDetail ? <SessionDetail sessionId={hashRoute.id!} /> : contentMap[activeKey]}
         </Content>
