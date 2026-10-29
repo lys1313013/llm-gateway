@@ -61,7 +61,7 @@ func setupRouter(t *testing.T) *gin.Engine {
 	_ = os.Setenv("DB_NAME", mustEnv("TEST_DB_NAME", "llm_gateway"))
 	_ = os.Setenv("DB_USER", mustEnv("TEST_DB_USER", "postgres"))
 	_ = os.Setenv("DB_PASSWORD", requireEnv(t, "TEST_DB_PASSWORD"))
-	_ = os.Setenv("JWT_SECRET_KEY", "test-secret")
+	_ = os.Setenv("JWT_SECRET_KEY", "handler-tests-only-32-byte-secret-not-for-deployment")
 
 	config.Load()
 	slog.SetDefault(slog.New(slog.NewTextHandler(io.Discard, nil)))
@@ -285,10 +285,10 @@ func TestProviderCRUD(t *testing.T) {
 
 	// Create
 	w, pbody := doJSON(t, r, "POST", "/api/provider", map[string]any{
-		"name":             fmt.Sprintf("gtest_provider_%d", suffix),
-		"openai_base_url":  "https://example.com/v1",
-		"api_key":          "sk-test",
-		"remark":           "go test",
+		"name":            fmt.Sprintf("gtest_provider_%d", suffix),
+		"openai_base_url": "https://example.com/v1",
+		"api_key":         "sk-test",
+		"remark":          "go test",
 	}, auth)
 	if w.Code != 200 {
 		t.Fatalf("create provider: %d: %s", w.Code, w.Body.String())
@@ -309,10 +309,10 @@ func TestProviderCRUD(t *testing.T) {
 
 	// Update
 	w, _ = doJSON(t, r, "PUT", fmt.Sprintf("/api/provider/%d", int(pid)), map[string]any{
-		"name":             fmt.Sprintf("gtest_provider_%d", suffix),
-		"openai_base_url":  "https://example.com/v2",
-		"api_key":          "sk-test2",
-		"remark":           "updated",
+		"name":            fmt.Sprintf("gtest_provider_%d", suffix),
+		"openai_base_url": "https://example.com/v2",
+		"api_key":         "sk-test2",
+		"remark":          "updated",
 	}, auth)
 	if w.Code != 200 {
 		t.Fatalf("update provider: %d", w.Code)
@@ -340,10 +340,9 @@ func TestLogs_AndStats(t *testing.T) {
 	token, _ := body["data"].(map[string]any)["token"].(string)
 	auth := map[string]string{"Authorization": "Bearer " + token}
 
-	// Promote to admin so they can see all logs
+	// Keep this as a common user: empty own-log/stat queries must still work.
 	userData, _ := body["data"].(map[string]any)["user"].(map[string]any)
 	logUserID := int(userData["id"].(float64))
-	_ = db.UpdateUserRole(context.Background(), logUserID, 2)
 	t.Cleanup(func() {
 		db.Pool.Exec(context.Background(), "DELETE FROM users WHERE id = $1", logUserID)
 	})
@@ -380,12 +379,9 @@ func TestSessions_Smoke(t *testing.T) {
 	token, _ := body["data"].(map[string]any)["token"].(string)
 	auth := map[string]string{"Authorization": "Bearer " + token}
 
-	// Promote to admin so session queries see all logs
+	// Exercise sessions with the common user who owns the seeded logs.
 	userData, _ := body["data"].(map[string]any)["user"].(map[string]any)
 	sessUserID := int(userData["id"].(float64))
-	if err := db.UpdateUserRole(context.Background(), sessUserID, 2); err != nil {
-		t.Fatalf("promote to admin: %v", err)
-	}
 	t.Cleanup(func() {
 		db.Pool.Exec(context.Background(), "DELETE FROM users WHERE id = $1", sessUserID)
 	})
@@ -401,40 +397,43 @@ func TestSessions_Smoke(t *testing.T) {
 	// Three logs for sessA, two for sessB, one with NULL session_id.
 	for i := 0; i < 3; i++ {
 		if err := db.InsertLog(ctx, db.InsertLogInput{
-			Model:          strPtrLocal("gpt-4o-mini"),
-			IsStream:       false,
-			StatusCode:     200,
+			UserID:           &sessUserID,
+			Model:            strPtrLocal("gpt-4o-mini"),
+			IsStream:         false,
+			StatusCode:       200,
 			ProcessingTimeMs: 100 + i,
-			PromptTokens:   intPtrLocal(10 + i),
+			PromptTokens:     intPtrLocal(10 + i),
 			CompletionTokens: intPtrLocal(20 + i),
-			TotalTokens:    intPtrLocal(30 + 2*i),
-			Protocol:       strPtrLocal("openai"),
-			SessionID:      strPtrOrNilLocal(sessA),
+			TotalTokens:      intPtrLocal(30 + 2*i),
+			Protocol:         strPtrLocal("openai"),
+			SessionID:        strPtrOrNilLocal(sessA),
 		}); err != nil {
 			t.Fatalf("insert sessA[%d]: %v", i, err)
 		}
 	}
 	for i := 0; i < 2; i++ {
 		if err := db.InsertLog(ctx, db.InsertLogInput{
-			Model:          strPtrLocal("claude-haiku-4-5"),
-			IsStream:       true,
-			StatusCode:     200,
+			UserID:           &sessUserID,
+			Model:            strPtrLocal("claude-haiku-4-5"),
+			IsStream:         true,
+			StatusCode:       200,
 			ProcessingTimeMs: 200 + i,
-			PromptTokens:   intPtrLocal(5),
+			PromptTokens:     intPtrLocal(5),
 			CompletionTokens: intPtrLocal(10),
-			TotalTokens:    intPtrLocal(15),
-			Protocol:       strPtrLocal("anthropic"),
-			SessionID:      strPtrOrNilLocal(sessB),
+			TotalTokens:      intPtrLocal(15),
+			Protocol:         strPtrLocal("anthropic"),
+			SessionID:        strPtrOrNilLocal(sessB),
 		}); err != nil {
 			t.Fatalf("insert sessB[%d]: %v", i, err)
 		}
 	}
 	// No session — should not appear in the list
 	if err := db.InsertLog(ctx, db.InsertLogInput{
-		Model:        strPtrLocal("gpt-4o-mini"),
-		IsStream:     false,
-		StatusCode:   200,
-		Protocol:     strPtrLocal("openai"),
+		UserID:     &sessUserID,
+		Model:      strPtrLocal("gpt-4o-mini"),
+		IsStream:   false,
+		StatusCode: 200,
+		Protocol:   strPtrLocal("openai"),
 	}); err != nil {
 		t.Fatalf("insert nosess: %v", err)
 	}
@@ -513,9 +512,14 @@ func TestSessions_Smoke(t *testing.T) {
 // local helpers — kept private to the test file so they don't pollute the
 // proxy/db package. Mirror the strPtr/intPtr/strPtrOrNil helpers used by
 // the production InsertLogInput call sites.
-func strPtrLocal(s string) *string       { return &s }
-func strPtrOrNilLocal(s string) *string  { if s == "" { return nil }; return &s }
-func intPtrLocal(n int) *int             { return &n }
+func strPtrLocal(s string) *string { return &s }
+func strPtrOrNilLocal(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
+}
+func intPtrLocal(n int) *int { return &n }
 
 // TestConcurrentLoad fires N parallel /api/logs requests to demonstrate
 // that the Go server handles concurrency cleanly.
@@ -532,10 +536,9 @@ func TestConcurrentLoad(t *testing.T) {
 	token, _ := body["data"].(map[string]any)["token"].(string)
 	auth := map[string]string{"Authorization": "Bearer " + token}
 
-	// Promote to admin for load test
+	// Exercise concurrent reads with a valid common-user login.
 	userData, _ := body["data"].(map[string]any)["user"].(map[string]any)
 	loadUserID := int(userData["id"].(float64))
-	_ = db.UpdateUserRole(context.Background(), loadUserID, 2)
 	t.Cleanup(func() {
 		db.Pool.Exec(context.Background(), "DELETE FROM users WHERE id = $1", loadUserID)
 	})
@@ -655,9 +658,9 @@ func TestRouteCRUD(t *testing.T) {
 
 	// Need a provider first (route references provider_id)
 	w, pbody := doJSON(t, r, "POST", "/api/provider", map[string]any{
-		"name":             fmt.Sprintf("gtest_route_prov_%d", time.Now().UnixNano()),
-		"openai_base_url":  "https://example.com/v1",
-		"api_key":          "sk-test",
+		"name":            fmt.Sprintf("gtest_route_prov_%d", time.Now().UnixNano()),
+		"openai_base_url": "https://example.com/v1",
+		"api_key":         "sk-test",
 	}, auth)
 	if w.Code != 200 {
 		t.Fatalf("create provider for route test: %d: %s", w.Code, w.Body.String())
@@ -741,8 +744,8 @@ func TestExposedModelCRUD(t *testing.T) {
 
 	// Create —— 不带 team_id：非 root 强制写自己团队
 	w, mbody := doJSON(t, r, "POST", "/api/exposed_model", map[string]any{
-		"model_id": modelName,
-		"owned_by": "gtest-org",
+		"model_id":  modelName,
+		"owned_by":  "gtest-org",
 		"is_active": true,
 	}, auth)
 	if w.Code != 200 {
@@ -797,8 +800,8 @@ func TestExposedModelCRUD(t *testing.T) {
 	// Update
 	updatedName := fmt.Sprintf("gtest-exposed-upd-%d", time.Now().UnixNano())
 	w, _ = doJSON(t, r, "PUT", fmt.Sprintf("/api/exposed_model/%d", mid), map[string]any{
-		"model_id": updatedName,
-		"owned_by": "gtest-org-v2",
+		"model_id":  updatedName,
+		"owned_by":  "gtest-org-v2",
 		"is_active": true,
 	}, auth)
 	if w.Code != 200 {
@@ -1145,38 +1148,37 @@ func TestUserManagement(t *testing.T) {
 func TestChangePassword(t *testing.T) {
 	r := setupRouter(t)
 	auth := registerAndPromote(t, r, "gtest_pw")
-
-	// Change password
+	meW, meBody := doJSON(t, r, "GET", "/api/auth/me", nil, auth)
+	if meW.Code != 200 {
+		t.Fatalf("me before password change: %d", meW.Code)
+	}
+	username := meBody["data"].(map[string]any)["username"].(string)
 	w, _ := doJSON(t, r, "PUT", "/api/auth/change_password", map[string]string{
-		"old_password": "test_pw_1234",
-		"new_password": "new_pw_5678",
+		"old_password": "test_pw_1234", "new_password": "new_pw_5678",
 	}, auth)
 	if w.Code != 200 {
 		t.Fatalf("change password: %d: %s", w.Code, w.Body.String())
 	}
-
-	// Old password should no longer work
-	w, _ = doJSON(t, r, "POST", "/api/auth/login", map[string]string{
-		"username": "should-fail-with-old",
-		"password": "test_pw_1234",
-	}, nil)
-	// Just verify the change_password endpoint itself works; old password
-	// from the registered user won't work for login since username is random.
-	_ = w
-
-	// New password login — find the username from the auth JWT
-	meW, meBody := doJSON(t, r, "GET", "/api/auth/me", nil, auth)
-	if meW.Code != 200 {
-		t.Fatalf("me: %d", meW.Code)
+	w, _ = doJSON(t, r, "GET", "/api/auth/me", nil, auth)
+	if w.Code != 401 {
+		t.Fatalf("old token after password change: want 401, got %d", w.Code)
 	}
-	username, _ := meBody["data"].(map[string]any)["username"].(string)
-
 	w, _ = doJSON(t, r, "POST", "/api/auth/login", map[string]string{
-		"username": username,
-		"password": "new_pw_5678",
+		"username": username, "password": "test_pw_1234",
+	}, nil)
+	if w.Code != 401 {
+		t.Fatalf("old password: want 401, got %d", w.Code)
+	}
+	w, body := doJSON(t, r, "POST", "/api/auth/login", map[string]string{
+		"username": username, "password": "new_pw_5678",
 	}, nil)
 	if w.Code != 200 {
 		t.Fatalf("login with new password: %d: %s", w.Code, w.Body.String())
+	}
+	token := body["data"].(map[string]any)["token"].(string)
+	w, _ = doJSON(t, r, "GET", "/api/auth/me", nil, map[string]string{"Authorization": "Bearer " + token})
+	if w.Code != 200 {
+		t.Fatalf("new token: want 200, got %d", w.Code)
 	}
 }
 
@@ -1242,6 +1244,11 @@ func TestCommonUserCannotWrite(t *testing.T) {
 func TestLogDetailAndDelete(t *testing.T) {
 	r := setupRouter(t)
 	auth := registerAndPromote(t, r, "gtest_logdetail")
+	meW, me := doJSON(t, r, "GET", "/api/auth/me", nil, auth)
+	if meW.Code != 200 {
+		t.Fatalf("me: %d", meW.Code)
+	}
+	userID := int(me["data"].(map[string]any)["id"].(float64))
 
 	// Insert a log row directly so we have something to query
 	ctx := context.Background()
@@ -1251,6 +1258,7 @@ func TestLogDetailAndDelete(t *testing.T) {
 		db.Pool.Exec(context.Background(), "DELETE FROM api_logs WHERE model = $1", model)
 	})
 	if err := db.InsertLog(ctx, db.InsertLogInput{
+		UserID:           &userID,
 		Model:            &model,
 		IsStream:         false,
 		StatusCode:       200,
@@ -1291,6 +1299,11 @@ func TestLogDetailAndDelete(t *testing.T) {
 func TestSessionDelete(t *testing.T) {
 	r := setupRouter(t)
 	auth := registerAndPromote(t, r, "gtest_sessdel")
+	meW, me := doJSON(t, r, "GET", "/api/auth/me", nil, auth)
+	if meW.Code != 200 {
+		t.Fatalf("me: %d", meW.Code)
+	}
+	userID := int(me["data"].(map[string]any)["id"].(float64))
 
 	sessionID := fmt.Sprintf("sess-del-%d", time.Now().UnixNano())
 	ctx := context.Background()
@@ -1301,6 +1314,7 @@ func TestSessionDelete(t *testing.T) {
 	// Insert a few logs with a session_id
 	for i := 0; i < 3; i++ {
 		if err := db.InsertLog(ctx, db.InsertLogInput{
+			UserID:           &userID,
 			Model:            strPtrLocal("gpt-4o-mini"),
 			IsStream:         false,
 			StatusCode:       200,
@@ -1376,9 +1390,9 @@ func setupUpstreamRoute(t *testing.T, r http.Handler, auth map[string]string, ro
 	// Create provider
 	provName := fmt.Sprintf("gtest_upstream_%s_%d", routeType, time.Now().UnixNano())
 	provPayload := map[string]any{
-		"name":        provName,
-		"api_key":     upstreamAPIKey(t),
-		"remark":      "go test upstream",
+		"name":    provName,
+		"api_key": upstreamAPIKey(t),
+		"remark":  "go test upstream",
 	}
 	if routeType == "openai" {
 		provPayload["openai_base_url"] = baseURL
@@ -1440,14 +1454,14 @@ func TestUpstream_OpenAI_NonStreaming(t *testing.T) {
 	})
 
 	v1Headers := map[string]string{
-		"Authorization":             "Bearer " + gwKey,
-		"X-Claude-Code-Session-Id":  fmt.Sprintf("gtest-upstream-%d", time.Now().UnixNano()),
+		"Authorization":            "Bearer " + gwKey,
+		"X-Claude-Code-Session-Id": fmt.Sprintf("gtest-upstream-%d", time.Now().UnixNano()),
 	}
 
 	w, body := doJSON(t, r, "POST", "/v1/chat/completions", map[string]any{
-		"model":       model,
-		"messages":    []map[string]string{{"role": "user", "content": "Reply with the single word: pong"}},
-		"max_tokens":  50,
+		"model":      model,
+		"messages":   []map[string]string{{"role": "user", "content": "Reply with the single word: pong"}},
+		"max_tokens": 50,
 	}, v1Headers)
 	if w.Code != 200 {
 		t.Fatalf("non-stream chat: %d: %s", w.Code, w.Body.String())
@@ -1479,14 +1493,14 @@ func TestUpstream_OpenAI_Streaming(t *testing.T) {
 	})
 
 	v1Headers := map[string]string{
-		"Authorization":             "Bearer " + gwKey,
-		"X-Claude-Code-Session-Id":  fmt.Sprintf("gtest-upstream-stream-%d", time.Now().UnixNano()),
+		"Authorization":            "Bearer " + gwKey,
+		"X-Claude-Code-Session-Id": fmt.Sprintf("gtest-upstream-stream-%d", time.Now().UnixNano()),
 	}
 
 	body := map[string]any{
-		"model":    model,
-		"messages": []map[string]string{{"role": "user", "content": "Count: 1 2 3"}},
-		"stream":   true,
+		"model":      model,
+		"messages":   []map[string]string{{"role": "user", "content": "Count: 1 2 3"}},
+		"stream":     true,
 		"max_tokens": 60,
 	}
 	b, _ := json.Marshal(body)
@@ -1531,9 +1545,9 @@ func TestUpstream_Anthropic(t *testing.T) {
 	})
 
 	v1Headers := map[string]string{
-		"x-api-key":                 gwKey,
-		"anthropic-version":         "2023-06-01",
-		"X-Claude-Code-Session-Id":  fmt.Sprintf("gtest-upstream-anthropic-%d", time.Now().UnixNano()),
+		"x-api-key":                gwKey,
+		"anthropic-version":        "2023-06-01",
+		"X-Claude-Code-Session-Id": fmt.Sprintf("gtest-upstream-anthropic-%d", time.Now().UnixNano()),
 	}
 
 	w, body := doJSON(t, r, "POST", "/v1/messages", map[string]any{

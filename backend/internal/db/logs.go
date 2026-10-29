@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/lys1313013/llm-gateway/backend/internal/config"
@@ -15,28 +16,28 @@ import (
 // ---------------------------------------------------------------------------
 
 type InsertLogInput struct {
-	Model                  *string
-	ProviderID             *int
-	ProviderName           *string
-	IsStream               bool
-	StatusCode             int
-	ProcessingTimeMs       int
-	PromptTokens           *int
-	CompletionTokens       *int
-	TotalTokens            *int
+	Model                    *string
+	ProviderID               *int
+	ProviderName             *string
+	IsStream                 bool
+	StatusCode               int
+	ProcessingTimeMs         int
+	PromptTokens             *int
+	CompletionTokens         *int
+	TotalTokens              *int
 	CacheCreationInputTokens *int
-	CacheReadInputTokens   *int
-	TargetURL              *string
-	RequestData            []byte // JSON
-	ResponseData           []byte // JSON
-	RequestHeaders         []byte // JSON
-	ResponseHeaders        []byte // JSON
-	ErrorMessage           *string
-	Protocol               *string
-	UsageData              []byte // JSON
-	SessionID              *string
-	UserID                 *int
-	LastMessagePreview     *string
+	CacheReadInputTokens     *int
+	TargetURL                *string
+	RequestData              []byte // JSON
+	ResponseData             []byte // JSON
+	RequestHeaders           []byte // JSON
+	ResponseHeaders          []byte // JSON
+	ErrorMessage             *string
+	Protocol                 *string
+	UsageData                []byte // JSON
+	SessionID                *string
+	UserID                   *int
+	LastMessagePreview       *string
 }
 
 func InsertLog(ctx context.Context, in InsertLogInput) error {
@@ -85,7 +86,7 @@ type LogListFilter struct {
 	Model      string
 	Protocol   string
 	StatusCode int
-	UserID     int
+	Scope      LogScope
 }
 
 func GetLogs(ctx context.Context, f LogListFilter) ([]models.APILog, error) {
@@ -115,24 +116,9 @@ func GetLogs(ctx context.Context, f LogListFilter) ([]models.APILog, error) {
 	             user_id,
 	             last_message_preview
 	      FROM api_logs WHERE 1=1`
-	args := []any{}
-	idx := 1
-	if f.Model != "" {
-		q += fmt.Sprintf(" AND model ILIKE $%d", idx)
-		args = append(args, "%"+f.Model+"%")
-		idx++
-	}
-	if f.Protocol != "" {
-		q += fmt.Sprintf(" AND protocol = $%d", idx)
-		args = append(args, f.Protocol)
-		idx++
-	}
-	if f.StatusCode > 0 {
-		q += fmt.Sprintf(" AND status_code = $%d", idx)
-		args = append(args, f.StatusCode)
-		idx++
-	}
-	q += fmt.Sprintf(" ORDER BY id DESC LIMIT $%d OFFSET $%d", idx, idx+1)
+	where, args := logFilterSQL(f)
+	q += where
+	q += fmt.Sprintf(" ORDER BY id DESC LIMIT $%d OFFSET $%d", len(args)+1, len(args)+2)
 	args = append(args, limit, offset)
 
 	rows, err := mustHavePool().Query(ctx, q, args...)
@@ -143,8 +129,8 @@ func GetLogs(ctx context.Context, f LogListFilter) ([]models.APILog, error) {
 	return scanLogs(rows)
 }
 
-func GetLogByID(ctx context.Context, id int) (*models.APILog, error) {
-	row := mustHavePool().QueryRow(ctx, `SELECT id, created_at, updated_at, model, provider_id, provider_name,
+func GetLogByID(ctx context.Context, id int, scope LogScope) (*models.APILog, error) {
+	q, args := scope.appendSQL(`SELECT id, created_at, updated_at, model, provider_id, provider_name,
 	             is_stream, status_code,
 	             processing_time_ms, prompt_tokens, completion_tokens, total_tokens,
 	             target_url, request_data, response_data,
@@ -154,7 +140,8 @@ func GetLogByID(ctx context.Context, id int) (*models.APILog, error) {
 	             session_id,
 	             user_id,
 	             last_message_preview
-	         FROM api_logs WHERE id = $1`, id)
+	         FROM api_logs WHERE id = $1`, []any{id})
+	row := mustHavePool().QueryRow(ctx, q, args...)
 	l, err := scanLog(row)
 	if err != nil {
 		if err.Error() == "no rows in result set" {
@@ -166,8 +153,9 @@ func GetLogByID(ctx context.Context, id int) (*models.APILog, error) {
 }
 
 // DeleteLog removes a single log row. Returns ErrNotFound when no row matched.
-func DeleteLog(ctx context.Context, id int) error {
-	tag, err := mustHavePool().Exec(ctx, `DELETE FROM api_logs WHERE id = $1`, id)
+func DeleteLog(ctx context.Context, id int, scope LogScope) error {
+	q, args := scope.appendSQL(`DELETE FROM api_logs WHERE id = $1`, []any{id})
+	tag, err := mustHavePool().Exec(ctx, q, args...)
 	if err != nil {
 		return err
 	}
@@ -179,9 +167,9 @@ func DeleteLog(ctx context.Context, id int) error {
 
 // DeleteLogsBySession removes every log row whose session_id matches. Returns
 // ErrNotFound when the session had no logs (so the handler can return 404).
-func DeleteLogsBySession(ctx context.Context, sessionID string) (int64, error) {
-	tag, err := mustHavePool().Exec(ctx,
-		`DELETE FROM api_logs WHERE session_id = $1`, sessionID)
+func DeleteLogsBySession(ctx context.Context, sessionID string, scope LogScope) (int64, error) {
+	q, args := scope.appendSQL(`DELETE FROM api_logs WHERE session_id = $1`, []any{sessionID})
+	tag, err := mustHavePool().Exec(ctx, q, args...)
 	if err != nil {
 		return 0, err
 	}
@@ -191,32 +179,31 @@ func DeleteLogsBySession(ctx context.Context, sessionID string) (int64, error) {
 	return tag.RowsAffected(), nil
 }
 
-func GetLogCount(ctx context.Context, model, protocol string, statusCode int, userID int) (int, error) {
-	q := `SELECT COUNT(*) FROM api_logs WHERE 1=1`
-	args := []any{}
-	idx := 1
-	if model != "" {
-		q += fmt.Sprintf(" AND model ILIKE $%d", idx)
-		args = append(args, "%"+model+"%")
-		idx++
+// logFilterSQL keeps authorization and list/count predicates identical.
+func logFilterSQL(f LogListFilter) (string, []any) {
+	var where strings.Builder
+	scopeSQL, args := f.Scope.appendSQL("", nil)
+	where.WriteString(scopeSQL)
+	add := func(predicate string, value any) {
+		args = append(args, value)
+		where.WriteString(fmt.Sprintf(" AND "+predicate, len(args)))
 	}
-	if protocol != "" {
-		q += fmt.Sprintf(" AND protocol = $%d", idx)
-		args = append(args, protocol)
-		idx++
+	if f.Model != "" {
+		add("model ILIKE $%d", "%"+f.Model+"%")
 	}
-	if statusCode > 0 {
-		q += fmt.Sprintf(" AND status_code = $%d", idx)
-		args = append(args, statusCode)
-		idx++
+	if f.Protocol != "" {
+		add("protocol = $%d", f.Protocol)
 	}
-	if userID > 0 {
-		q += fmt.Sprintf(" AND user_id = $%d", idx)
-		args = append(args, userID)
-		idx++
+	if f.StatusCode > 0 {
+		add("status_code = $%d", f.StatusCode)
 	}
+	return where.String(), args
+}
+
+func GetLogCount(ctx context.Context, f LogListFilter) (int, error) {
+	where, args := logFilterSQL(f)
 	var n int
-	err := mustHavePool().QueryRow(ctx, q, args...).Scan(&n)
+	err := mustHavePool().QueryRow(ctx, `SELECT COUNT(*) FROM api_logs WHERE 1=1`+where, args...).Scan(&n)
 	return n, err
 }
 
@@ -225,15 +212,15 @@ func GetLogCount(ctx context.Context, model, protocol string, statusCode int, us
 // ---------------------------------------------------------------------------
 
 type TodayStats struct {
-	TotalRequests    int   `json:"total_requests"`
-	SuccessRequests  int   `json:"success_requests"`
-	ErrorRequests    int   `json:"error_requests"`
-	PromptTokens     int   `json:"prompt_tokens"`
-	CompletionTokens int   `json:"completion_tokens"`
-	TotalTokens      int   `json:"total_tokens"`
+	TotalRequests    int `json:"total_requests"`
+	SuccessRequests  int `json:"success_requests"`
+	ErrorRequests    int `json:"error_requests"`
+	PromptTokens     int `json:"prompt_tokens"`
+	CompletionTokens int `json:"completion_tokens"`
+	TotalTokens      int `json:"total_tokens"`
 }
 
-func GetTodayStats(ctx context.Context, userID int) (*TodayStats, error) {
+func GetTodayStats(ctx context.Context, scope LogScope) (*TodayStats, error) {
 	// "Today" is computed in the configured DB timezone, matching the
 	// Python backend (default Asia/Shanghai).
 	tz := config.Get().DBTimezone
@@ -247,11 +234,7 @@ func GetTodayStats(ctx context.Context, userID int) (*TodayStats, error) {
 			COALESCE(SUM(total_tokens), 0)
 		FROM api_logs
 		WHERE DATE(created_at AT TIME ZONE '%s') = CURRENT_DATE`, tz)
-	args := []any{}
-	if userID > 0 {
-		q += fmt.Sprintf(" AND user_id = $%d", 1)
-		args = append(args, userID)
-	}
+	q, args := scope.appendSQL(q, nil)
 	row := mustHavePool().QueryRow(ctx, q, args...)
 	var s TodayStats
 	if err := row.Scan(&s.TotalRequests, &s.SuccessRequests, &s.ErrorRequests,
@@ -269,7 +252,7 @@ type DailyTokenStats struct {
 	TotalTokens      int    `json:"total_tokens"`
 }
 
-func GetDailyTokenStats(ctx context.Context, startDate, endDate string, userID int) ([]DailyTokenStats, error) {
+func GetDailyTokenStats(ctx context.Context, startDate, endDate string, scope LogScope) ([]DailyTokenStats, error) {
 	// Build query with numbered params
 	q := `
 		SELECT
@@ -281,11 +264,7 @@ func GetDailyTokenStats(ctx context.Context, startDate, endDate string, userID i
 		FROM api_logs
 		WHERE ($1::date IS NULL OR DATE(created_at) >= $1::date)
 		  AND ($2::date IS NULL OR DATE(created_at) <= $2::date)`
-	args := []any{nullDate(startDate), nullDate(endDate)}
-	if userID > 0 {
-		q += " AND user_id = $3"
-		args = append(args, userID)
-	}
+	q, args := scope.appendSQL(q, []any{nullDate(startDate), nullDate(endDate)})
 	q += " GROUP BY DATE(created_at) ORDER BY DATE(created_at) ASC"
 	rows, err := mustHavePool().Query(ctx, q, args...)
 	if err != nil {
@@ -311,15 +290,12 @@ type HourlyTokenStats struct {
 	TotalTokens      int `json:"total_tokens"`
 }
 
-func GetHourlyTokenStats(ctx context.Context, date string, userID int) ([]HourlyTokenStats, error) {
+func GetHourlyTokenStats(ctx context.Context, date string, scope LogScope) ([]HourlyTokenStats, error) {
 	// Python uses DB_TIMEZONE (default Asia/Shanghai) for both the date
 	// filter and the hour extraction, and pads the 24-hour series with
 	// zero rows via generate_series. We mirror that here.
 	tz := config.Get().DBTimezone
-	userFilter := ""
-	if userID > 0 {
-		userFilter = " AND user_id = $2"
-	}
+	userFilter, args := scope.appendSQL("", []any{nullDate(date)})
 	q := fmt.Sprintf(`
 		SELECT
 			g.hour AS hour,
@@ -340,10 +316,6 @@ func GetHourlyTokenStats(ctx context.Context, date string, userID int) ([]Hourly
 			GROUP BY EXTRACT(HOUR FROM created_at AT TIME ZONE '%s')
 		) s ON s.hour = g.hour
 		ORDER BY g.hour ASC`, tz, tz, userFilter, tz)
-	args := []any{nullDate(date)}
-	if userID > 0 {
-		args = append(args, userID)
-	}
 	rows, err := mustHavePool().Query(ctx, q, args...)
 	if err != nil {
 		return nil, err
@@ -368,7 +340,7 @@ type ModelTokenStats struct {
 	TotalTokens      int    `json:"total_tokens"`
 }
 
-func GetModelTokenStats(ctx context.Context, startDate, endDate string, userID int) ([]ModelTokenStats, error) {
+func GetModelTokenStats(ctx context.Context, startDate, endDate string, scope LogScope) ([]ModelTokenStats, error) {
 	q := `
 		SELECT
 			COALESCE(model, 'unknown') AS m,
@@ -379,11 +351,7 @@ func GetModelTokenStats(ctx context.Context, startDate, endDate string, userID i
 		FROM api_logs
 		WHERE ($1::date IS NULL OR DATE(created_at) >= $1::date)
 		  AND ($2::date IS NULL OR DATE(created_at) <= $2::date)`
-	args := []any{nullDate(startDate), nullDate(endDate)}
-	if userID > 0 {
-		q += " AND user_id = $3"
-		args = append(args, userID)
-	}
+	q, args := scope.appendSQL(q, []any{nullDate(startDate), nullDate(endDate)})
 	q += " GROUP BY model ORDER BY SUM(total_tokens) DESC"
 	rows, err := mustHavePool().Query(ctx, q, args...)
 	if err != nil {
@@ -411,13 +379,10 @@ func nullDate(s string) any {
 // GetDistinctStatusCodes returns the distinct, non-NULL status codes that
 // appear in api_logs, ordered from most to least frequent so that the most
 // relevant codes show up first in the UI filter.
-func GetDistinctStatusCodes(ctx context.Context) ([]int, error) {
-	rows, err := mustHavePool().Query(ctx, `
-		SELECT status_code
-		FROM api_logs
-		WHERE status_code IS NOT NULL
-		GROUP BY status_code
-		ORDER BY COUNT(*) DESC, status_code ASC`)
+func GetDistinctStatusCodes(ctx context.Context, scope LogScope) ([]int, error) {
+	q, args := scope.appendSQL(`SELECT status_code FROM api_logs WHERE status_code IS NOT NULL`, nil)
+	q += ` GROUP BY status_code ORDER BY COUNT(*) DESC, status_code ASC`
+	rows, err := mustHavePool().Query(ctx, q, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -527,7 +492,7 @@ type SessionsListFilter struct {
 	Query  string // optional ILIKE match on session_id
 	Limit  int
 	Offset int
-	UserID int
+	Scope  LogScope
 }
 
 func GetSessions(ctx context.Context, f SessionsListFilter) ([]SessionSummary, error) {
@@ -552,19 +517,8 @@ func GetSessions(ctx context.Context, f SessionsListFilter) ([]SessionSummary, e
 	             MAX(created_at) AS last_at
 	      FROM api_logs
 	      WHERE session_id IS NOT NULL`
-	args := []any{}
-	idx := 1
-	if f.Query != "" {
-		q += fmt.Sprintf(" AND session_id ILIKE $%d", idx)
-		args = append(args, "%"+f.Query+"%")
-		idx++
-	}
-	if f.UserID > 0 {
-		q += fmt.Sprintf(" AND user_id = $%d", idx)
-		args = append(args, f.UserID)
-		idx++
-	}
-	q += fmt.Sprintf(" GROUP BY session_id ORDER BY MAX(created_at) DESC LIMIT $%d OFFSET $%d", idx, idx+1)
+	q, args := sessionListSQL(q, f.Query, f.Scope)
+	q += fmt.Sprintf(" GROUP BY session_id ORDER BY MAX(created_at) DESC LIMIT $%d OFFSET $%d", len(args)+1, len(args)+2)
 	args = append(args, limit, offset)
 
 	rows, err := mustHavePool().Query(ctx, q, args...)
@@ -587,13 +541,19 @@ func GetSessions(ctx context.Context, f SessionsListFilter) ([]SessionSummary, e
 	return out, rows.Err()
 }
 
-func GetSessionCount(ctx context.Context, query string) (int, error) {
-	q := `SELECT COUNT(*) FROM (SELECT session_id FROM api_logs WHERE session_id IS NOT NULL`
-	args := []any{}
+// sessionListSQL keeps pagination totals and session aggregates in the same
+// authorization boundary, including when users supply identical session IDs.
+func sessionListSQL(q, query string, scope LogScope) (string, []any) {
+	q, args := scope.appendSQL(q, nil)
 	if query != "" {
-		q += " AND session_id ILIKE $1"
 		args = append(args, "%"+query+"%")
+		q += fmt.Sprintf(" AND session_id ILIKE $%d", len(args))
 	}
+	return q, args
+}
+
+func GetSessionCount(ctx context.Context, query string, scope LogScope) (int, error) {
+	q, args := sessionListSQL(`SELECT COUNT(*) FROM (SELECT session_id FROM api_logs WHERE session_id IS NOT NULL`, query, scope)
 	q += " GROUP BY session_id) t"
 	var n int
 	err := mustHavePool().QueryRow(ctx, q, args...).Scan(&n)
@@ -602,7 +562,7 @@ func GetSessionCount(ctx context.Context, query string) (int, error) {
 
 // GetLogsBySession returns logs for a single session in chronological
 // order (id ASC) so the detail page reads top-to-bottom like a transcript.
-func GetLogsBySession(ctx context.Context, sessionID string, limit, offset int) ([]models.APILog, error) {
+func GetLogsBySession(ctx context.Context, sessionID string, limit, offset int, scope LogScope) ([]models.APILog, error) {
 	if limit <= 0 {
 		limit = 100
 	}
@@ -612,7 +572,7 @@ func GetLogsBySession(ctx context.Context, sessionID string, limit, offset int) 
 	if offset < 0 {
 		offset = 0
 	}
-	rows, err := mustHavePool().Query(ctx, `
+	q, args := scope.appendSQL(`
 		SELECT id, created_at, updated_at, model, provider_id, provider_name,
 		       is_stream, status_code,
 		       processing_time_ms, prompt_tokens, completion_tokens, total_tokens,
@@ -623,9 +583,10 @@ func GetLogsBySession(ctx context.Context, sessionID string, limit, offset int) 
 		       user_id,
 		       last_message_preview
 		FROM api_logs
-		WHERE session_id = $1
-		ORDER BY id ASC
-		LIMIT $2 OFFSET $3`, sessionID, limit, offset)
+		WHERE session_id = $1`, []any{sessionID})
+	q += fmt.Sprintf(" ORDER BY id ASC LIMIT $%d OFFSET $%d", len(args)+1, len(args)+2)
+	args = append(args, limit, offset)
+	rows, err := mustHavePool().Query(ctx, q, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -633,21 +594,22 @@ func GetLogsBySession(ctx context.Context, sessionID string, limit, offset int) 
 	return scanLogs(rows)
 }
 
-func GetLogCountBySession(ctx context.Context, sessionID string) (int, error) {
+func GetLogCountBySession(ctx context.Context, sessionID string, scope LogScope) (int, error) {
 	var n int
-	err := mustHavePool().QueryRow(ctx,
-		`SELECT COUNT(*) FROM api_logs WHERE session_id = $1`, sessionID).Scan(&n)
+	q, args := scope.appendSQL(`SELECT COUNT(*) FROM api_logs WHERE session_id = $1`, []any{sessionID})
+	err := mustHavePool().QueryRow(ctx, q, args...).Scan(&n)
 	return n, err
 }
 
-func GetSessionMeta(ctx context.Context, sessionID string) (*SessionMeta, error) {
-	row := mustHavePool().QueryRow(ctx, `
+func GetSessionMeta(ctx context.Context, sessionID string, scope LogScope) (*SessionMeta, error) {
+	q, args := scope.appendSQL(`
 		SELECT COUNT(*),
 		       COALESCE(SUM(prompt_tokens), 0),
 		       COALESCE(SUM(completion_tokens), 0),
 		       COALESCE(SUM(total_tokens), 0),
 		       MIN(created_at), MAX(created_at)
-		FROM api_logs WHERE session_id = $1`, sessionID)
+		FROM api_logs WHERE session_id = $1`, []any{sessionID})
+	row := mustHavePool().QueryRow(ctx, q, args...)
 	m := SessionMeta{SessionID: sessionID}
 	if err := row.Scan(
 		&m.RequestCount,
@@ -665,14 +627,10 @@ func GetSessionMeta(ctx context.Context, sessionID string) (*SessionMeta, error)
 // GetDistinctSessionModels returns the unique, non-NULL model names for a
 // session, ordered by frequency. Capped at 100 to keep the UI list
 // manageable.
-func GetDistinctSessionModels(ctx context.Context, sessionID string) ([]string, error) {
-	rows, err := mustHavePool().Query(ctx, `
-		SELECT model
-		FROM api_logs
-		WHERE session_id = $1 AND model IS NOT NULL
-		GROUP BY model
-		ORDER BY COUNT(*) DESC, model ASC
-		LIMIT 100`, sessionID)
+func GetDistinctSessionModels(ctx context.Context, sessionID string, scope LogScope) ([]string, error) {
+	q, args := scope.appendSQL(`SELECT model FROM api_logs WHERE session_id = $1 AND model IS NOT NULL`, []any{sessionID})
+	q += ` GROUP BY model ORDER BY COUNT(*) DESC, model ASC LIMIT 100`
+	rows, err := mustHavePool().Query(ctx, q, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -688,13 +646,10 @@ func GetDistinctSessionModels(ctx context.Context, sessionID string) ([]string, 
 	return out, rows.Err()
 }
 
-func GetSessionStatusSummary(ctx context.Context, sessionID string) (map[string]int, error) {
-	rows, err := mustHavePool().Query(ctx, `
-		SELECT status_code, COUNT(*)
-		FROM api_logs
-		WHERE session_id = $1 AND status_code IS NOT NULL
-		GROUP BY status_code
-		ORDER BY status_code ASC`, sessionID)
+func GetSessionStatusSummary(ctx context.Context, sessionID string, scope LogScope) (map[string]int, error) {
+	q, args := scope.appendSQL(`SELECT status_code, COUNT(*) FROM api_logs WHERE session_id = $1 AND status_code IS NOT NULL`, []any{sessionID})
+	q += ` GROUP BY status_code ORDER BY status_code ASC`
+	rows, err := mustHavePool().Query(ctx, q, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -710,13 +665,10 @@ func GetSessionStatusSummary(ctx context.Context, sessionID string) (map[string]
 	return out, rows.Err()
 }
 
-func GetSessionProtocolSummary(ctx context.Context, sessionID string) (map[string]int, error) {
-	rows, err := mustHavePool().Query(ctx, `
-		SELECT protocol, COUNT(*)
-		FROM api_logs
-		WHERE session_id = $1 AND protocol IS NOT NULL
-		GROUP BY protocol
-		ORDER BY protocol ASC`, sessionID)
+func GetSessionProtocolSummary(ctx context.Context, sessionID string, scope LogScope) (map[string]int, error) {
+	q, args := scope.appendSQL(`SELECT protocol, COUNT(*) FROM api_logs WHERE session_id = $1 AND protocol IS NOT NULL`, []any{sessionID})
+	q += ` GROUP BY protocol ORDER BY protocol ASC`
+	rows, err := mustHavePool().Query(ctx, q, args...)
 	if err != nil {
 		return nil, err
 	}

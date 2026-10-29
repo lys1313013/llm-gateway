@@ -53,7 +53,7 @@ func Register(c *gin.Context) {
 		serverError(c, err)
 		return
 	}
-	token, err := auth.GenerateJWT(user.ID, user.Username, user.Role, nil)
+	token, err := auth.GenerateJWT(user)
 	if err != nil {
 		serverError(c, err)
 		return
@@ -94,7 +94,7 @@ func Login(c *gin.Context) {
 		c.JSON(http.StatusForbidden, gin.H{"success": false, "message": "账号已被禁用"})
 		return
 	}
-	token, err := auth.GenerateJWT(user.ID, user.Username, user.Role, user.TeamID)
+	token, err := auth.GenerateJWT(user)
 	if err != nil {
 		serverError(c, err)
 		return

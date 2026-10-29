@@ -53,6 +53,10 @@ func main() {
 
 	cfg := config.Load()
 	setupLogger(cfg)
+	if err := cfg.ValidateJWT(); err != nil {
+		slog.Error("invalid authentication configuration", "err", err)
+		os.Exit(1)
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

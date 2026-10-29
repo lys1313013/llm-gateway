@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"context"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/lys1313013/llm-gateway/backend/internal/auth"
 	"github.com/lys1313013/llm-gateway/backend/internal/db"
+	"github.com/lys1313013/llm-gateway/backend/internal/models"
 )
 
 const (
@@ -28,6 +30,12 @@ var authWhitelist = []string{
 // RequireAuth is a before-request guard that enforces the right auth for
 // the path family. /api/* → JWT. /v1/* → API Key. Everything else passes.
 func RequireAuth() gin.HandlerFunc {
+	return requireAuth(db.GetUserByID)
+}
+
+type userLookup func(context.Context, int) (*models.User, error)
+
+func requireAuth(lookup userLookup) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		// CORS preflight
 		if c.Request.Method == http.MethodOptions {
@@ -47,7 +55,7 @@ func RequireAuth() gin.HandlerFunc {
 
 		switch {
 		case strings.HasPrefix(path, "/api/"):
-			applyJWT(c)
+			applyJWT(c, lookup)
 		case strings.HasPrefix(path, "/v1/"):
 			applyAPIKey(c)
 		default:
@@ -56,7 +64,7 @@ func RequireAuth() gin.HandlerFunc {
 	}
 }
 
-func applyJWT(c *gin.Context) {
+func applyJWT(c *gin.Context, lookup userLookup) {
 	hdr := c.GetHeader("Authorization")
 	if !strings.HasPrefix(hdr, "Bearer ") {
 		abort(c, http.StatusUnauthorized, gin.H{
@@ -73,10 +81,20 @@ func applyJWT(c *gin.Context) {
 		})
 		return
 	}
-	c.Set(CtxUserID, claims.UserID)
-	c.Set(CtxUsername, claims.Username)
-	c.Set(CtxUserRole, claims.Role)
-	c.Set(CtxTeamID, claims.TeamID)
+	user, err := lookup(c.Request.Context(), claims.UserID)
+	if err != nil {
+		slog.Error("jwt user lookup", "err", err)
+		abort(c, http.StatusInternalServerError, gin.H{"success": false, "message": "身份验证暂时不可用"})
+		return
+	}
+	if err := auth.ValidateCurrentUser(claims, user); err != nil {
+		abort(c, http.StatusUnauthorized, gin.H{"success": false, "message": "登录已失效，请重新登录"})
+		return
+	}
+	c.Set(CtxUserID, user.ID)
+	c.Set(CtxUsername, user.Username)
+	c.Set(CtxUserRole, user.Role)
+	c.Set(CtxTeamID, user.TeamID)
 	c.Next()
 }
 

@@ -19,7 +19,7 @@ x-db-env: &db-env
   # 等 postgres 就绪的总秒数。postgres 在 docker-compose.db.yml 里、与本文件
   # 不同 project，没有 depends_on，冷启动时先起来的一侧靠这个窗口等。
   DB_CONNECT_TIMEOUT: ${DB_CONNECT_TIMEOUT:-60}
-  JWT_SECRET_KEY: ${JWT_SECRET_KEY:-change-me-to-a-random-secret-string}
+  JWT_SECRET_KEY: ${JWT_SECRET_KEY:?Set a strong random JWT_SECRET_KEY (at least 32 bytes)}
   JWT_EXPIRATION_HOURS: ${JWT_EXPIRATION_HOURS:-168}
   LOG_LEVEL: ${LOG_LEVEL:-info}
   SESSION_ID_HEADERS: ${SESSION_ID_HEADERS:-X-Claude-Code-Session-Id,X-Agent-Session-Id}

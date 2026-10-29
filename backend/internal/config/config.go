@@ -49,7 +49,7 @@ func Load() *Config {
 		DBPassword:        getEnv("DB_PASSWORD", "password"),
 		DBTimezone:        getEnvTZ("DB_TIMEZONE", "Asia/Shanghai"),
 		DBConnectTimeoutS: getEnvInt("DB_CONNECT_TIMEOUT", 60),
-		JWTSecret:         getEnv("JWT_SECRET_KEY", "dev-secret-key-change-in-production"),
+		JWTSecret:         getEnv("JWT_SECRET_KEY", ""),
 		JWTExpirationH:    getEnvInt("JWT_EXPIRATION_HOURS", 168),
 		LogLevel:          getEnv("LOG_LEVEL", "info"),
 		SessionIDHeaders:  getEnvCSV("SESSION_ID_HEADERS", []string{"X-Claude-Code-Session-Id"}),
@@ -63,6 +63,23 @@ func Get() *Config {
 		return Load()
 	}
 	return cfg
+}
+
+// ValidateJWT rejects missing and publicly known signing secrets. Database-only
+// CLI commands do not call this; HTTP startup and JWT operations always do.
+func (c *Config) ValidateJWT() error {
+	secret := c.JWTSecret
+	if len(secret) < 32 || strings.TrimSpace(secret) != secret {
+		return fmt.Errorf("JWT_SECRET_KEY must contain at least 32 bytes without surrounding whitespace; generate a random secret")
+	}
+	switch strings.ToLower(secret) {
+	case "dev-secret-key-change-in-production", "change-me-to-a-random-secret-string", "your-jwt-secret-key-change-in-production":
+		return fmt.Errorf("JWT_SECRET_KEY must not use a known default value")
+	}
+	if c.JWTExpirationH <= 0 || c.JWTExpirationH > 24*365 {
+		return fmt.Errorf("JWT_EXPIRATION_HOURS must be between 1 and 8760")
+	}
+	return nil
 }
 
 // ConnInfo returns a libpq-style connection string.

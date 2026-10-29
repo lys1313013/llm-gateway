@@ -12,6 +12,7 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"hash"
@@ -22,6 +23,7 @@ import (
 	"golang.org/x/crypto/scrypt"
 
 	"github.com/lys1313013/llm-gateway/backend/internal/config"
+	"github.com/lys1313013/llm-gateway/backend/internal/models"
 )
 
 const (
@@ -65,6 +67,7 @@ func HashPassword(password string) (string, error) {
 // Werkzeug has shipped two salt encodings over the years:
 //   - old (and what we emit): standard base64
 //   - newer (Werkzeug 3.x default): 16 raw alphanumeric characters
+//
 // We try base64 first and fall back to treating the salt as raw bytes.
 func VerifyPassword(password, encoded string) bool {
 	if encoded == "" {
@@ -217,23 +220,54 @@ func pbkdf2(password, salt []byte, iter, keyLen int, h func() hash.Hash) []byte 
 // ---------------------------------------------------------------------------
 
 type Claims struct {
-	UserID   int    `json:"sub_int"`
-	Username string `json:"username"`
-	Role     int    `json:"role"`
-	TeamID   *int   `json:"team_id,omitempty"`
+	UserID      int    `json:"sub_int"`
+	Username    string `json:"username"`
+	Role        int    `json:"role"`
+	TeamID      *int   `json:"team_id,omitempty"`
+	AuthVersion string `json:"auth_version"`
 	jwt.RegisteredClaims
 }
 
-func GenerateJWT(userID int, username string, role int, teamID *int) (string, error) {
+// authenticationVersion binds a login to the current credential and permission
+// state without storing a password hash in the token or adding schema. Existing
+// account mutations update updated_at, so changing a role away and back does not
+// revive a previous token. HMAC prevents disclosing a password-hash fingerprint.
+func authenticationVersion(user *models.User, secret string) string {
+	state := struct {
+		ID           int
+		Username     string
+		PasswordHash string
+		Role         int
+		TeamID       *int
+		IsActive     bool
+		CreatedAt    string
+		UpdatedAt    string
+	}{user.ID, user.Username, user.PasswordHash, user.Role, user.TeamID,
+		user.IsActive, user.CreatedAt.UTC().Format(time.RFC3339Nano), user.UpdatedAt.UTC().Format(time.RFC3339Nano)}
+	payload, _ := json.Marshal(state) // only scalar fields; cannot fail
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write([]byte("llm-gateway:auth-state:v1\x00"))
+	mac.Write(payload)
+	return hex.EncodeToString(mac.Sum(nil))
+}
+
+func GenerateJWT(user *models.User) (string, error) {
 	c := config.Get()
+	if err := c.ValidateJWT(); err != nil {
+		return "", err
+	}
+	if user == nil || user.ID <= 0 || !user.IsActive || user.PasswordHash == "" || user.Role < 1 || user.Role > 3 {
+		return "", errors.New("cannot issue a token for an invalid or inactive user")
+	}
 	now := time.Now()
 	claims := Claims{
-		UserID:   userID,
-		Username: username,
-		Role:     role,
-		TeamID:   teamID,
+		UserID:      user.ID,
+		Username:    user.Username,
+		Role:        user.Role,
+		TeamID:      user.TeamID,
+		AuthVersion: authenticationVersion(user, c.JWTSecret),
 		RegisteredClaims: jwt.RegisteredClaims{
-			Subject:   fmt.Sprintf("%d", userID),
+			Subject:   fmt.Sprintf("%d", user.ID),
 			IssuedAt:  jwt.NewNumericDate(now),
 			ExpiresAt: jwt.NewNumericDate(now.Add(time.Duration(c.JWTExpirationH) * time.Hour)),
 		},
@@ -244,26 +278,45 @@ func GenerateJWT(userID int, username string, role int, teamID *int) (string, er
 
 func DecodeJWT(tokenStr string) (*Claims, error) {
 	c := config.Get()
+	if err := c.ValidateJWT(); err != nil {
+		return nil, err
+	}
 	tok, err := jwt.ParseWithClaims(tokenStr, &Claims{}, func(t *jwt.Token) (any, error) {
-		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
-			return nil, errors.New("unexpected signing method")
-		}
 		return []byte(c.JWTSecret), nil
-	})
+	}, jwt.WithValidMethods([]string{jwt.SigningMethodHS256.Alg()}), jwt.WithExpirationRequired(), jwt.WithIssuedAt())
 	if err != nil {
 		return nil, err
 	}
 	claims, ok := tok.Claims.(*Claims)
-	if !ok || !tok.Valid {
-		return nil, errors.New("invalid token")
-	}
-	if claims.UserID == 0 {
-		// Fall back to "sub" if int sub is missing
-		if _, err := fmt.Sscanf(claims.Subject, "%d", &claims.UserID); err != nil {
-			return nil, errors.New("invalid sub claim")
-		}
+	if !ok || !tok.Valid || claims.UserID <= 0 || claims.Subject != fmt.Sprintf("%d", claims.UserID) || claims.IssuedAt == nil || claims.AuthVersion == "" {
+		return nil, errors.New("invalid token claims; sign in again")
 	}
 	return claims, nil
+}
+
+// ValidateCurrentUser must run against a freshly loaded account on every JWT
+// request. Deleted/disabled accounts and stale credentials or permissions fail
+// closed. Legacy tokens without auth_version must sign in again after upgrade.
+func ValidateCurrentUser(claims *Claims, user *models.User) error {
+	if claims == nil || user == nil || !user.IsActive || user.ID <= 0 || user.ID != claims.UserID || user.PasswordHash == "" || user.Role < 1 || user.Role > 3 {
+		return errors.New("account unavailable")
+	}
+	c := config.Get()
+	if err := c.ValidateJWT(); err != nil {
+		return err
+	}
+	if claims.Username != user.Username || claims.Role != user.Role || !sameTeam(claims.TeamID, user.TeamID) ||
+		!hmac.Equal([]byte(claims.AuthVersion), []byte(authenticationVersion(user, c.JWTSecret))) {
+		return errors.New("authentication state changed; sign in again")
+	}
+	return nil
+}
+
+func sameTeam(a, b *int) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	return *a == *b
 }
 
 // ---------------------------------------------------------------------------

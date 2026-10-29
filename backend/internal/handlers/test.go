@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -14,19 +15,53 @@ import (
 	"github.com/lys1313013/llm-gateway/backend/internal/proxy"
 )
 
-// testRouteTeamID 决定测试请求按哪个团队的路由去匹配：请求体里的 team_id 优先
-// （root 在管理页测别的团队的模型），缺省回落到调用者自己的团队。
-//
-// 这里刻意不做 requireModelAccess 那套授权：/api/test/* 是管理页的连通性测试，
-// 必须能测任意团队的模型，闸门加上去会让「测试」按钮对有问题的记录永久 403。
-func testRouteTeamID(c *gin.Context, data map[string]any) int {
-	if v, ok := data["team_id"].(float64); ok && v > 0 {
-		return int(v)
+// testRouteTeamID permits an explicit cross-team target only for root. Team
+// admins may test their own routes before exposure; common users must pass the
+// same model authorization as /v1 below.
+func testRouteTeamID(c *gin.Context, data map[string]any) (int, bool) {
+	role := middleware.GetUserRole(c)
+	if c.GetInt(middleware.CtxUserID) <= 0 || role < 1 || role > 3 {
+		c.JSON(http.StatusForbidden, gin.H{"error": gin.H{"type": "permission_error", "message": "Invalid caller"}})
+		return 0, false
 	}
-	return routeTeamID(c)
+	teamID := routeTeamID(c)
+	if raw, present := data["team_id"]; present {
+		value, valid := raw.(float64)
+		if !valid || value <= 0 || value >= float64(math.MaxInt) || math.Trunc(value) != value {
+			c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{"type": "invalid_request_error", "message": "team_id must be a positive integer"}})
+			return 0, false
+		}
+		requested := int(value)
+		if role != 1 && requested != teamID {
+			c.JSON(http.StatusForbidden, gin.H{"error": gin.H{"type": "permission_error", "message": "Cannot test another team's routes"}})
+			return 0, false
+		}
+		teamID = requested
+	}
+	if teamID <= 0 {
+		c.JSON(http.StatusForbidden, gin.H{"error": gin.H{"type": "permission_error", "message": "A team is required to test models"}})
+		return 0, false
+	}
+	return teamID, true
 }
 
-// TestChat is the admin-only OpenAI test endpoint (/api/test/chat).
+func authorizeTestModel(c *gin.Context, data map[string]any, protocol string) (int, bool) {
+	model, _ := data["model"].(string)
+	if model == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{"type": "invalid_request_error", "message": "model is required"}})
+		return 0, false
+	}
+	teamID, ok := testRouteTeamID(c, data)
+	if !ok {
+		return 0, false
+	}
+	if middleware.GetUserRole(c) == 3 && !requireModelAccess(c, model, protocol) {
+		return 0, false
+	}
+	return teamID, true
+}
+
+// TestChat is the authorized OpenAI test endpoint (/api/test/chat).
 // Authentication is JWT (the RequireAuth middleware already ran); we don't
 // need an API key.
 func TestChat(c *gin.Context) {
@@ -44,8 +79,15 @@ func TestChat(c *gin.Context) {
 		}})
 		return
 	}
+	teamID, allowed := authorizeTestModel(c, data, "openai")
+	if !allowed {
+		return
+	}
+	// team_id is gateway management metadata, not an upstream API parameter.
+	delete(data, "team_id")
+	body, _ = json.Marshal(data)
 	model, _ := data["model"].(string)
-	routes, err := db.GetActiveRoutes(c.Request.Context(), testRouteTeamID(c, data))
+	routes, err := db.GetActiveRoutes(c.Request.Context(), teamID)
 	if err != nil {
 		serverError(c, err)
 		return
@@ -104,7 +146,7 @@ func TestChat(c *gin.Context) {
 	c.Data(status, "application/json", respBody)
 }
 
-// TestMessages is the admin-only Anthropic test endpoint (/api/test/messages).
+// TestMessages is the authorized Anthropic test endpoint (/api/test/messages).
 func TestMessages(c *gin.Context) {
 	body, err := io.ReadAll(c.Request.Body)
 	if err != nil {
@@ -122,8 +164,15 @@ func TestMessages(c *gin.Context) {
 		})
 		return
 	}
+	teamID, allowed := authorizeTestModel(c, data, "anthropic")
+	if !allowed {
+		return
+	}
+	// team_id is gateway management metadata, not an upstream API parameter.
+	delete(data, "team_id")
+	body, _ = json.Marshal(data)
 	model, _ := data["model"].(string)
-	routes, err := db.GetActiveRoutes(c.Request.Context(), testRouteTeamID(c, data))
+	routes, err := db.GetActiveRoutes(c.Request.Context(), teamID)
 	if err != nil {
 		serverError(c, err)
 		return

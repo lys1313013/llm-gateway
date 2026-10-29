@@ -583,39 +583,35 @@ func ListLogs(c *gin.Context) {
 	if model == "" {
 		model = c.Query("model_name") // support both
 	}
-	userIDForFilter := 0
-	if middleware.GetUserRole(c) > 2 {
-		userIDForFilter = c.GetInt(middleware.CtxUserID)
-	}
 	filter := db.LogListFilter{
 		Limit:      limit,
 		Offset:     offset,
 		Model:      model,
 		Protocol:   protocol,
 		StatusCode: statusCode,
-		UserID:     userIDForFilter,
+		Scope:      logScope(c),
 	}
 	logs, err := db.GetLogs(c.Request.Context(), filter)
 	if err != nil {
 		serverError(c, err)
 		return
 	}
-	total, _ := db.GetLogCount(c.Request.Context(), filter.Model, filter.Protocol, filter.StatusCode, userIDForFilter)
+	total, err := db.GetLogCount(c.Request.Context(), filter)
+	if err != nil {
+		serverError(c, err)
+		return
+	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "data": logs, "total": total})
 }
 
 func GetLogDetail(c *gin.Context) {
 	id, _ := strconv.Atoi(c.Param("id"))
-	log, err := db.GetLogByID(c.Request.Context(), id)
+	log, err := db.GetLogByID(c.Request.Context(), id, logScope(c))
 	if err != nil {
 		serverError(c, err)
 		return
 	}
 	if log == nil {
-		notFound(c, "Not found")
-		return
-	}
-	if middleware.GetUserRole(c) > 2 && log.UserID != nil && *log.UserID != c.GetInt(middleware.CtxUserID) {
 		notFound(c, "Not found")
 		return
 	}
@@ -635,7 +631,7 @@ func DeleteLog(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "invalid log id"})
 		return
 	}
-	if err := db.DeleteLog(c.Request.Context(), id); err != nil {
+	if err := db.DeleteLog(c.Request.Context(), id, logScope(c)); err != nil {
 		if err == db.ErrNotFound {
 			c.JSON(http.StatusNotFound, gin.H{"success": false, "message": "Log not found"})
 			return
@@ -660,7 +656,7 @@ func ListSessions(c *gin.Context) {
 	q := c.Query("q")
 
 	sessions, err := db.GetSessions(c.Request.Context(), db.SessionsListFilter{
-		Query: q, Limit: limit, Offset: offset,
+		Query: q, Limit: limit, Offset: offset, Scope: logScope(c),
 	})
 	if err != nil {
 		serverError(c, err)
@@ -668,21 +664,21 @@ func ListSessions(c *gin.Context) {
 	}
 
 	for i := range sessions {
-		models, mErr := db.GetDistinctSessionModels(c.Request.Context(), sessions[i].SessionID)
+		models, mErr := db.GetDistinctSessionModels(c.Request.Context(), sessions[i].SessionID, logScope(c))
 		if mErr == nil {
 			sessions[i].Models = models
 		}
-		statuses, sErr := db.GetSessionStatusSummary(c.Request.Context(), sessions[i].SessionID)
+		statuses, sErr := db.GetSessionStatusSummary(c.Request.Context(), sessions[i].SessionID, logScope(c))
 		if sErr == nil {
 			sessions[i].StatusSummary = statuses
 		}
-		protos, pErr := db.GetSessionProtocolSummary(c.Request.Context(), sessions[i].SessionID)
+		protos, pErr := db.GetSessionProtocolSummary(c.Request.Context(), sessions[i].SessionID, logScope(c))
 		if pErr == nil {
 			sessions[i].ProtocolSummary = protos
 		}
 	}
 
-	total, _ := db.GetSessionCount(c.Request.Context(), q)
+	total, _ := db.GetSessionCount(c.Request.Context(), q, logScope(c))
 	c.JSON(http.StatusOK, gin.H{"success": true, "data": sessions, "total": total})
 }
 
@@ -699,7 +695,7 @@ func GetSession(c *gin.Context) {
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "100"))
 	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
 
-	meta, err := db.GetSessionMeta(c.Request.Context(), sessionID)
+	meta, err := db.GetSessionMeta(c.Request.Context(), sessionID, logScope(c))
 	if err != nil {
 		serverError(c, err)
 		return
@@ -709,19 +705,19 @@ func GetSession(c *gin.Context) {
 		return
 	}
 
-	models, _ := db.GetDistinctSessionModels(c.Request.Context(), sessionID)
+	models, _ := db.GetDistinctSessionModels(c.Request.Context(), sessionID, logScope(c))
 	meta.Models = models
-	statuses, _ := db.GetSessionStatusSummary(c.Request.Context(), sessionID)
+	statuses, _ := db.GetSessionStatusSummary(c.Request.Context(), sessionID, logScope(c))
 	meta.StatusSummary = statuses
-	protos, _ := db.GetSessionProtocolSummary(c.Request.Context(), sessionID)
+	protos, _ := db.GetSessionProtocolSummary(c.Request.Context(), sessionID, logScope(c))
 	meta.ProtocolSummary = protos
 
-	logs, err := db.GetLogsBySession(c.Request.Context(), sessionID, limit, offset)
+	logs, err := db.GetLogsBySession(c.Request.Context(), sessionID, limit, offset, logScope(c))
 	if err != nil {
 		serverError(c, err)
 		return
 	}
-	total, _ := db.GetLogCountBySession(c.Request.Context(), sessionID)
+	total, _ := db.GetLogCountBySession(c.Request.Context(), sessionID, logScope(c))
 
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
@@ -744,7 +740,7 @@ func DeleteSession(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "session id required"})
 		return
 	}
-	deleted, err := db.DeleteLogsBySession(c.Request.Context(), sessionID)
+	deleted, err := db.DeleteLogsBySession(c.Request.Context(), sessionID, logScope(c))
 	if err != nil {
 		if err == db.ErrNotFound {
 			c.JSON(http.StatusNotFound, gin.H{"success": false, "message": "Session not found"})
@@ -761,7 +757,7 @@ func DeleteSession(c *gin.Context) {
 }
 
 func ListStatusCodes(c *gin.Context) {
-	codes, err := db.GetDistinctStatusCodes(c.Request.Context())
+	codes, err := db.GetDistinctStatusCodes(c.Request.Context(), logScope(c))
 	if err != nil {
 		serverError(c, err)
 		return
@@ -773,11 +769,7 @@ func ListStatusCodes(c *gin.Context) {
 }
 
 func TodayStats(c *gin.Context) {
-	userID := 0
-	if middleware.GetUserRole(c) > 2 {
-		userID = c.GetInt(middleware.CtxUserID)
-	}
-	s, err := db.GetTodayStats(c.Request.Context(), userID)
+	s, err := db.GetTodayStats(c.Request.Context(), logScope(c))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": "Failed to get stats"})
 		return
@@ -795,20 +787,15 @@ func DailyTokenStats(c *gin.Context) {
 		endDate = time.Now().Format("2006-01-02")
 	}
 
-	userID := 0
-	if middleware.GetUserRole(c) > 2 {
-		userID = c.GetInt(middleware.CtxUserID)
-	}
-
 	single := startDate == endDate
 
 	if single {
-		hourly, err := db.GetHourlyTokenStats(c.Request.Context(), startDate, userID)
+		hourly, err := db.GetHourlyTokenStats(c.Request.Context(), startDate, logScope(c))
 		if err != nil {
 			serverError(c, err)
 			return
 		}
-		models, err := db.GetModelTokenStats(c.Request.Context(), startDate, endDate, userID)
+		models, err := db.GetModelTokenStats(c.Request.Context(), startDate, endDate, logScope(c))
 		if err != nil {
 			serverError(c, err)
 			return
@@ -825,12 +812,12 @@ func DailyTokenStats(c *gin.Context) {
 		return
 	}
 
-	daily, err := db.GetDailyTokenStats(c.Request.Context(), startDate, endDate, userID)
+	daily, err := db.GetDailyTokenStats(c.Request.Context(), startDate, endDate, logScope(c))
 	if err != nil {
 		serverError(c, err)
 		return
 	}
-	models, err := db.GetModelTokenStats(c.Request.Context(), startDate, endDate, userID)
+	models, err := db.GetModelTokenStats(c.Request.Context(), startDate, endDate, logScope(c))
 	if err != nil {
 		serverError(c, err)
 		return
